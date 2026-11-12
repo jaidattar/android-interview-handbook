@@ -2,7 +2,7 @@
 
 A free, interactive interview guide for Android developers. It covers Kotlin, architecture, coroutines and Flow, Jetpack Compose, debugging and performance, coding-round patterns, system design, and how to answer questions about experience gaps.
 
-**Read it online:** https://YOUR-USERNAME.github.io/android-interview-handbook/
+**Read it online:** https://jaidattar.github.io/android-interview-handbook/
 
 ## Contents
 
