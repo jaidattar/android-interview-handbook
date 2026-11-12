@@ -1,0 +1,288 @@
+<section class="topic framework">
+<h2>The seven-step coding-round routine</h2>
+<div class="qa"><ol>
+<li><b>Clarify:</b> input size, duplicates, negatives, empty input, whether it is sorted, one answer or all answers, and whether you may modify the input.</li>
+<li><b>Examples:</b> walk through one normal case and one edge case by hand.</li>
+<li><b>Brute force first,</b> and state its complexity: <mark>“The naive way is O(n²). Let me see if I can do better.”</mark></li>
+<li><b>Optimise:</b> name the pattern (hash map, two pointers, window and so on) and explain <em>why</em> it applies.</li>
+<li><b>Code</b> cleanly, with meaningful names, while you talk.</li>
+<li><b>Test</b> by dry-running your example and the edge cases.</li>
+<li><b>State time and space complexity,</b> then mention alternatives and follow-ups.</li></ol></div>
+<div class="table-wrap"><table><tr><th>Cue in the problem</th><th>Think of</th></tr>
+<tr><td>“Find a pair or complement”, “seen before?”, counting</td><td>HashMap or HashSet</td></tr>
+<tr><td>Sorted array, palindrome, two ends</td><td>Two pointers</td></tr>
+<tr><td>Longest or shortest <em>contiguous</em> subarray or substring</td><td>Sliding window</td></tr>
+<tr><td>Matching, nesting, undo, “most recent”</td><td>Stack</td></tr>
+<tr><td>Level by level, shortest path in an unweighted graph</td><td>Queue and BFS</td></tr>
+<tr><td>Sorted data, “minimum that satisfies a condition”</td><td>Binary search</td></tr>
+<tr><td>Overlaps, where ordering is needed first</td><td>Sort, then scan</td></tr>
+<tr><td>Hierarchy, or a subproblem of the same kind</td><td>Recursion or tree DFS</td></tr>
+<tr><td>Overlapping subproblems, “number of ways”, minimum or maximum cost</td><td>Dynamic programming</td></tr></table></div>
+<div class="table-wrap"><table><tr><th>Operation</th><th>Cost</th><th>Operation</th><th>Cost</th></tr>
+<tr><td>Array index</td><td>O(1)</td><td>HashMap get and put (average)</td><td>O(1)</td></tr>
+<tr><td>ArrayList add (amortised)</td><td>O(1)</td><td>Sort</td><td>O(n log n)</td></tr>
+<tr><td>Insert in the middle of a list</td><td>O(n)</td><td>Binary search</td><td>O(log n)</td></tr>
+<tr><td>Full tree traversal</td><td>O(n)</td><td>Heap push or pop</td><td>O(log n)</td></tr></table></div>
+<p class="tip"><b>Kotlin tips:</b> use <code>ArrayDeque</code> from <code>kotlin.collections</code> for stacks and queues instead of the legacy <code>java.util.Stack</code>. <code>IntArray(26)</code> counts letters. <code>mid = lo + (hi - lo) / 2</code> avoids overflow. <code>Char - Char</code> gives an <code>Int</code>. Avoid <code>!!</code>. Watch <code>Int</code> overflow, and use <code>Long</code> when sums can be large.</p>
+</section>
+
+<section class="topic">
+<h2>1. Arrays and strings: Two Sum</h2>
+<p class="asks">Core pattern. Cue: “find two numbers that add to a target”.</p>
+<div class="qa"><p class="q">Approach</p>
+<p>The brute force uses two nested loops and costs O(n²). <mark>Better: for each number, ask “have I already seen target minus x?”</mark> A HashMap from value to index answers that in O(1), so one pass is enough.</p>
+<pre><code>fun twoSum(nums: IntArray, target: Int): IntArray {
+    val seen = HashMap&lt;Int, Int&gt;()                      // value -&gt; index
+    for (i in nums.indices) {
+        val need = target - nums[i]
+        seen[need]?.let { return intArrayOf(it, i) }      // check BEFORE inserting
+        seen[nums[i]] = i
+    }
+    return intArrayOf()                                    // or throw if a solution is guaranteed
+}</code></pre>
+<p><b>Time O(n), space O(n).</b> Checking before inserting means an element is never paired with itself.</p></div>
+<p class="tip"><b>Edge cases:</b> duplicates such as <code>[3, 3]</code> with target 6, negatives, no solution, empty array. <b>Follow-ups:</b> if the input is already sorted, use two pointers in O(1) space. Return all pairs. 3Sum is sort plus two pointers. Strings are immutable in Kotlin, so use <code>buildString</code> inside loops.</p>
+</section>
+
+<section class="topic">
+<h2>2. HashMap and HashSet: First non-repeating character</h2>
+<p class="asks">Cue: “count occurrences”, “have I seen this?”.</p>
+<div class="qa"><p class="q">Approach</p>
+<p><mark>Two passes: count every character, then return the first index whose count is 1.</mark> The second pass runs in original order, which is what makes “first” correct.</p>
+<pre><code>fun firstUniqChar(s: String): Int {
+    val count = HashMap&lt;Char, Int&gt;()
+    for (c in s) count[c] = (count[c] ?: 0) + 1
+    for (i in s.indices) if (count[s[i]] == 1) return i
+    return -1
+}
+// Lowercase letters only: val count = IntArray(26); count[c - 'a']++   (no hashing, O(1) space)</code></pre>
+<p><b>Time O(n), space O(k),</b> where k is the number of distinct characters. It is O(1) when the alphabet is fixed.</p></div>
+<div class="qa"><p class="q">Quick HashSet wins</p>
+<pre><code>fun containsDuplicate(nums: IntArray) = nums.toHashSet().size != nums.size
+// Group anagrams: key = word.toCharArray().sorted().joinToString(""), then map key to list</code></pre></div>
+<p class="tip"><b>Edge cases:</b> an empty string returns -1, and so does a string where every character repeats. State your alphabet assumption for Unicode or uppercase. <b>Follow-ups:</b> streaming input (a <code>LinkedHashMap</code> keeps order). Explain that HashMap is O(1) on average, and why. See Chapter {{ch:1}} for the internals.</p>
+</section>
+
+<section class="topic">
+<h2>3. Two pointers: Valid palindrome</h2>
+<p class="asks">Cue: sorted input, symmetric check, “in place”, “O(1) extra space”.</p>
+<div class="qa"><p class="q">Approach</p>
+<p>Put one pointer at each end and move them inward. Skip characters that do not count, then compare. <mark>Each pointer moves at most n times, so this is O(n) time and O(1) space</mark>, compared with O(n) space for building a reversed copy.</p>
+<pre><code>fun isPalindrome(s: String): Boolean {
+    var l = 0
+    var r = s.lastIndex
+    while (l &lt; r) {
+        while (l &lt; r &amp;&amp; !s[l].isLetterOrDigit()) l++
+        while (l &lt; r &amp;&amp; !s[r].isLetterOrDigit()) r--
+        if (s[l].lowercaseChar() != s[r].lowercaseChar()) return false
+        l++; r--
+    }
+    return true
+}</code></pre></div>
+<p class="tip"><b>Edge cases:</b> an empty string or a single character returns true. A string of only punctuation returns true. Mixed case. <b>Follow-ups:</b> Valid Palindrome II, where one character may be deleted; Two Sum II on a sorted array; Container With Most Water; removing duplicates in place with slow and fast pointers.</p>
+</section>
+
+<section class="topic">
+<h2>4. Sliding window: Longest substring without repeating characters</h2>
+<p class="asks">Cue: the longest or shortest contiguous range that satisfies a constraint.</p>
+<div class="qa"><p class="q">Approach</p>
+<p>Keep a window <code>[left, right]</code> with no duplicates. Move <code>right</code> forward. If the new character was last seen <em>inside</em> the window, <mark>move <code>left</code> to just after that earlier position</mark>. Track the largest window length.</p>
+<pre><code>fun lengthOfLongestSubstring(s: String): Int {
+    val lastSeen = HashMap&lt;Char, Int&gt;()
+    var left = 0
+    var best = 0
+    for (right in s.indices) {
+        val c = s[right]
+        val prev = lastSeen[c]
+        if (prev != null &amp;&amp; prev &gt;= left) left = prev + 1    // prev &gt;= left: it is inside the window
+        lastSeen[c] = right
+        best = maxOf(best, right - left + 1)
+    }
+    return best
+}</code></pre>
+<p><b>Time O(n),</b> since each index is visited once. <b>Space O(k).</b> The classic bug is “abba”: without the check <code>prev &gt;= left</code>, <code>left</code> would move backwards.</p></div>
+<p class="tip"><b>Template:</b> expand <code>right</code>, shrink <code>left</code> while the window is invalid, then update the answer. <b>Follow-ups:</b> Best Time to Buy and Sell Stock, Longest Repeating Character Replacement, Minimum Window Substring, and the maximum sum of a fixed-size window.</p>
+</section>
+
+<section class="topic">
+<h2>5. Stack and queue: Valid parentheses</h2>
+<p class="asks">Cue: nesting, matching pairs, “the most recent unresolved item”.</p>
+<div class="qa"><p class="q">Approach</p>
+<p>Push every opening bracket. On a closing bracket, <mark>the top of the stack must be its matching opener</mark>, and you pop it. At the end the stack must be empty.</p>
+<pre><code>fun isValid(s: String): Boolean {
+    val stack = ArrayDeque&lt;Char&gt;()
+    val match = mapOf(')' to '(', ']' to '[', '}' to '{')
+    for (c in s) {
+        if (c in match) {
+            if (stack.removeLastOrNull() != match[c]) return false   // empty stack or wrong opener
+        } else {
+            stack.addLast(c)
+        }
+    }
+    return stack.isEmpty()
+}</code></pre>
+<p><b>Time O(n), space O(n).</b> A queue is FIFO: <code>addLast</code> and <code>removeFirst</code>. It drives BFS in topic 8.</p></div>
+<p class="tip"><b>Edge cases:</b> an empty string is valid. A string of only closers is invalid, which <code>removeLastOrNull</code> handles. Leftover openers are invalid. An odd length allows a quick early exit. <b>Follow-ups:</b> Min Stack, Daily Temperatures with a monotonic stack, evaluating reverse Polish notation, and implementing a queue with two stacks.</p>
+</section>
+
+<section class="topic">
+<h2>6. Binary search: Search in a sorted array</h2>
+<p class="asks">Cue: sorted data, or “find the smallest value that satisfies a condition”.</p>
+<div class="qa"><p class="q">Approach</p>
+<p>Halve the search range each step, which gives <mark>O(log n)</mark>. Decide on the invariant, here the inclusive range <code>[lo, hi]</code>, and keep it consistent.</p>
+<pre><code>fun search(nums: IntArray, target: Int): Int {
+    var lo = 0
+    var hi = nums.lastIndex
+    while (lo &lt;= hi) {
+        val mid = lo + (hi - lo) / 2            // avoids Int overflow
+        when {
+            nums[mid] == target -&gt; return mid
+            nums[mid] &lt; target  -&gt; lo = mid + 1
+            else                -&gt; hi = mid - 1
+        }
+    }
+    return -1
+}</code></pre>
+<p><b>Time O(log n), space O(1).</b> Kotlin also has <code>nums.binarySearch(target)</code>, which returns <code>-(insertionPoint) - 1</code> when the value is absent.</p></div>
+<p class="tip"><b>Bugs to avoid:</b> infinite loops from wrong updates to <code>lo</code> and <code>hi</code>, and off-by-one errors between <code>&lt;</code> and <code>&lt;=</code>. <b>Follow-ups:</b> first and last occurrence (lower and upper bound), Search in a Rotated Sorted Array, Find Peak Element, Sqrt(x), and binary search on the answer, such as the minimum capacity to ship everything in D days.</p>
+</section>
+
+<section class="topic">
+<h2>7. Sorting: Merge intervals</h2>
+<p class="asks">Cue: overlapping ranges, where ordering must come before scanning.</p>
+<div class="qa"><p class="q">Approach</p>
+<p><mark>Sort by start. Then scan once: if the next interval starts before or at the current end, extend the end; otherwise start a new interval.</mark></p>
+<pre><code>fun merge(intervals: Array&lt;IntArray&gt;): Array&lt;IntArray&gt; {
+    if (intervals.isEmpty()) return emptyArray()
+    val sorted = intervals.sortedBy { it[0] }
+    val result = mutableListOf(sorted[0].copyOf())
+    for (i in 1 until sorted.size) {
+        val last = result.last()
+        if (sorted[i][0] &lt;= last[1]) last[1] = maxOf(last[1], sorted[i][1])
+        else result.add(sorted[i].copyOf())
+    }
+    return result.toTypedArray()
+}</code></pre>
+<p><b>Time O(n log n),</b> dominated by the sort. <b>Space O(n).</b> <code>maxOf</code> handles containment, such as <code>[1, 10]</code> and <code>[2, 3]</code>.</p></div>
+<div class="qa"><p class="q">What should you know about sorting itself?</p>
+<ul><li><b>Merge sort</b>: O(n log n) always, stable, O(n) extra space. <b>Quick sort</b>: O(n log n) on average, O(n²) in the worst case, in place. <b>Heap sort</b>: O(n log n), O(1) extra space.</li>
+<li>On the JVM, primitive arrays use dual-pivot quicksort, and object collections use <mark>TimSort, which is stable</mark>. So <code>sortedBy</code> keeps ties in their original order.</li></ul></div>
+<p class="tip"><b>Edge cases:</b> touching intervals such as <code>[1, 2]</code> and <code>[2, 3]</code> should merge, so use <code>&lt;=</code>. Also check a single interval, unsorted input, and identical intervals. <b>Follow-ups:</b> Insert Interval, Meeting Rooms I and II, and Non-overlapping Intervals.</p>
+</section>
+
+<section class="topic">
+<h2>8. Trees: Binary tree traversal</h2>
+<p class="asks">Cue: a hierarchy, “visit every node”, questions about depth, paths or ancestors.</p>
+<div class="qa"><p class="q">The four traversals</p>
+<ul><li><b>Preorder</b> (node, left, right), <b>inorder</b> (left, node, right; <mark>the inorder traversal of a BST is sorted</mark>), <b>postorder</b> (left, right, node), and <b>level order</b> (BFS with a queue).</li></ul>
+<pre><code>class TreeNode(val value: Int, var left: TreeNode? = null, var right: TreeNode? = null)
+
+fun inorder(root: TreeNode?, out: MutableList&lt;Int&gt; = mutableListOf()): List&lt;Int&gt; {
+    if (root == null) return out                                 // base case
+    inorder(root.left, out)
+    out.add(root.value)
+    inorder(root.right, out)
+    return out
+}
+
+fun inorderIterative(root: TreeNode?): List&lt;Int&gt; {          // explicit stack, no recursion depth risk
+    val result = mutableListOf&lt;Int&gt;()
+    val stack = ArrayDeque&lt;TreeNode&gt;()
+    var current = root
+    while (current != null || stack.isNotEmpty()) {
+        while (current != null) { stack.addLast(current); current = current.left }
+        val node = stack.removeLast()
+        result.add(node.value)
+        current = node.right
+    }
+    return result
+}
+
+fun levelOrder(root: TreeNode?): List&lt;List&lt;Int&gt;&gt; {
+    val result = mutableListOf&lt;List&lt;Int&gt;&gt;()
+    if (root == null) return result
+    val queue = ArrayDeque&lt;TreeNode&gt;().apply { addLast(root) }
+    while (queue.isNotEmpty()) {
+        val level = mutableListOf&lt;Int&gt;()
+        repeat(queue.size) {
+            val node = queue.removeFirst()
+            level.add(node.value)
+            node.left?.let(queue::addLast)
+            node.right?.let(queue::addLast)
+        }
+        result.add(level)
+    }
+    return result
+}</code></pre>
+<p><b>Time O(n)</b> for all of them. <b>Space O(h)</b> for DFS, where h is the height (O(n) for a skewed tree), and O(w) for BFS, where w is the maximum width.</p></div>
+<p class="tip"><b>Follow-ups:</b> Maximum Depth, which is <code>1 + max(depth(left), depth(right))</code>. Validate BST, by passing min and max bounds down. Lowest Common Ancestor, Invert Tree, Path Sum. Recursion on a very deep tree can hit <code>StackOverflowError</code>.</p>
+</section>
+
+<section class="topic">
+<h2>9. Recursion basics</h2>
+<p class="asks">Cue: the problem contains a smaller version of itself.</p>
+<div class="qa"><p class="q">The recipe</p>
+<ol><li><b>Base case</b>, which stops the recursion.</li>
+<li><b>Recursive case</b>, which moves toward the base case.</li>
+<li><mark>Trust the smaller call.</mark> Assume it returns the right answer, then combine.</li></ol>
+<pre><code>fun factorial(n: Int): Long = if (n &lt;= 1) 1L else n * factorial(n - 1)
+
+// Naive Fibonacci is O(2^n). Memoisation makes it O(n).
+fun fib(n: Int, memo: HashMap&lt;Int, Long&gt; = HashMap()): Long {
+    if (n &lt;= 1) return n.toLong()
+    return memo.getOrPut(n) { fib(n - 1, memo) + fib(n - 2, memo) }
+}
+
+tailrec fun sumTo(n: Int, acc: Long = 0): Long =
+    if (n == 0) acc else sumTo(n - 1, acc + n)     // compiled into a loop
+
+// Backtracking: choose, explore, then undo the choice
+fun subsets(nums: IntArray): List&lt;List&lt;Int&gt;&gt; {
+    val result = mutableListOf&lt;List&lt;Int&gt;&gt;()
+    val path = mutableListOf&lt;Int&gt;()
+    fun go(i: Int) {
+        if (i == nums.size) { result.add(path.toList()); return }
+        go(i + 1)                                    // skip nums[i]
+        path.add(nums[i]); go(i + 1); path.removeLast()   // take it, then undo
+    }
+    go(0)
+    return result
+}</code></pre></div>
+<p class="say">“Each call uses a stack frame, so depth matters: the space cost is O(depth), and very deep recursion can overflow the stack.”</p>
+<p class="tip"><b>Note:</b> <code>tailrec</code> works only when the self-call is the last operation. <b>Practise:</b> reversing a string or list, computing power(x, n) in O(log n), generating parentheses, permutations, Fibonacci, and flattening a nested list.</p>
+</section>
+
+<section class="topic">
+<h2>10. Dynamic programming: Climbing stairs</h2>
+<p class="asks">Cue: overlapping subproblems, “how many ways”, “minimum or maximum cost”.</p>
+<div class="qa"><p class="q">The DP recipe</p>
+<ol><li><b>State:</b> <code>ways(i)</code> is the number of ways to reach step i.</li>
+<li><b>Recurrence:</b> you arrive from step i-1 or i-2, so <mark><code>ways(i) = ways(i-1) + ways(i-2)</code></mark>. It is Fibonacci.</li>
+<li><b>Base cases:</b> ways(1) = 1, ways(2) = 2.</li>
+<li><b>Order and space:</b> only the last two values are needed, so the space is O(1).</li></ol>
+<pre><code>fun climbStairs(n: Int): Int {
+    if (n &lt;= 2) return n
+    var prev2 = 1      // ways(i-2)
+    var prev1 = 2      // ways(i-1)
+    for (i in 3..n) {
+        val current = prev1 + prev2
+        prev2 = prev1
+        prev1 = current
+    }
+    return prev1
+}</code></pre>
+<p><b>Time O(n), space O(1).</b> Show the evolution in an interview: plain recursion O(2ⁿ), then top-down memoisation with O(n) space, then a bottom-up table, then two variables with O(1) space.</p></div>
+<p class="tip"><b>Edge cases:</b> n = 1 and n = 2. Large n overflows <code>Int</code>, so use <code>Long</code> or <code>BigInteger</code> if asked. <b>Follow-ups, roughly by difficulty:</b> Min Cost Climbing Stairs, House Robber, Coin Change, Longest Increasing Subsequence, Unique Paths, and 0/1 Knapsack.</p>
+</section>
+
+<section class="topic">
+<h2>Practice plan: from moderate to interview-ready</h2>
+<div class="table-wrap"><table><tr><th>Week</th><th>What to do</th></tr>
+<tr><td>1</td><td>Topics 1 to 3: three problems each, at Easy level. Always write the brute force first, then optimise.</td></tr>
+<tr><td>2</td><td>Topics 4 to 6: sliding window, stack and binary search, from Easy to Medium.</td></tr>
+<tr><td>3</td><td>Topics 7 and 8: intervals, and tree DFS and BFS, at Medium level.</td></tr>
+<tr><td>4</td><td>Topics 9 and 10, then <mark>mixed timed sets</mark>: 35 minutes per Medium problem, speaking aloud.</td></tr></table></div>
+<ul><li>Redo a problem three days later without looking at your notes. <mark>Pattern recognition grows from repetition, not from reading solutions.</mark></li>
+<li>After each problem, write down the pattern, the key insight, the complexity, and one bug you hit.</li>
+<li>Practise in plain Kotlin without IDE autocomplete, and test with your own edge cases.</li></ul>
+</section>

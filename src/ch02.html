@@ -1,0 +1,206 @@
+<section class="topic">
+<h2>1. MVVM</h2>
+<p class="asks">Often asked as: “What are the responsibilities of each layer?”, “Why a ViewModel and not a Presenter?”, “Can a ViewModel hold a Context?”</p>
+<div class="qa"><p class="q">Explain MVVM.</p>
+<ul><li><b>Model</b>: data and business rules (repositories, entities, use cases). It knows nothing about the UI.</li>
+<li><b>View</b>: Activity, Fragment or Composable. <mark>It renders state and forwards user events, with no business logic.</mark></li>
+<li><b>ViewModel</b>: holds UI state, exposes it as observable streams, handles events and calls the data or domain layer. <mark>It holds no reference to the View, the Activity or a View Context.</mark></li></ul>
+<p>The flow is <mark>events go up, state comes down</mark>: unidirectional data flow.</p></div>
+<div class="qa"><p class="q">Why does a ViewModel survive rotation?</p>
+<p>It is stored in a <code>ViewModelStore</code> owned by the Activity or the navigation back-stack entry. The store survives configuration changes and is cleared only when the owner finishes permanently (<code>onCleared()</code>). <mark>It does NOT survive process death.</mark> Use <code>SavedStateHandle</code> for small state that must survive it.</p></div>
+<pre><code>@HiltViewModel
+class OrdersViewModel @Inject constructor(private val repo: OrderRepository) : ViewModel() {
+    private val _ui = MutableStateFlow&lt;OrdersUi&gt;(OrdersUi.Loading)
+    val ui: StateFlow&lt;OrdersUi&gt; = _ui.asStateFlow()
+
+    fun onRefresh() = viewModelScope.launch { _ui.value = repo.load().toUi() }
+}</code></pre>
+<p class="tip"><b>Trap:</b> MVVM vs MVI. MVI keeps a single immutable state and explicit intents, which makes state easy to reproduce. You can use MVVM with a single <code>UiState</code> and get most of that benefit. Do not expose a <code>MutableStateFlow</code> publicly, and do not pass the ViewModel deep into child composables: pass state and lambdas instead.</p>
+</section>
+
+<section class="topic">
+<h2>2. Clean architecture</h2>
+<p class="asks">Often asked as: “Describe the layers and the dependency rule”, “Is a use case always needed?”, “Where do mappers go?”</p>
+<figure class="diagram">
+<svg viewBox="0 0 680 230" role="img" aria-label="Three layers: presentation depends on domain, data implements domain interfaces">
+<defs><marker id="arr-ca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--c)"/></marker></defs>
+<rect x="20" y="30" width="190" height="150" rx="14" class="bx2"/>
+<text x="115" y="62" text-anchor="middle">Presentation</text>
+<text x="115" y="88" text-anchor="middle" class="sm">UI, ViewModel</text>
+<text x="115" y="108" text-anchor="middle" class="sm">state, events</text>
+<rect x="245" y="30" width="190" height="150" rx="14" class="bx"/>
+<text x="340" y="62" text-anchor="middle">Domain</text>
+<text x="340" y="88" text-anchor="middle" class="sm">pure Kotlin</text>
+<text x="340" y="108" text-anchor="middle" class="sm">entities, use cases,</text>
+<text x="340" y="126" text-anchor="middle" class="sm">repository interfaces</text>
+<rect x="470" y="30" width="190" height="150" rx="14" class="bx2"/>
+<text x="565" y="62" text-anchor="middle">Data</text>
+<text x="565" y="88" text-anchor="middle" class="sm">repository impls,</text>
+<text x="565" y="108" text-anchor="middle" class="sm">Room, Retrofit, DTOs</text>
+<line x1="212" y1="105" x2="242" y2="105" class="arr" marker-end="url(#arr-ca)"/>
+<line x1="468" y1="105" x2="438" y2="105" class="arr" marker-end="url(#arr-ca)"/>
+<text x="340" y="206" text-anchor="middle" class="sm">Source dependencies point inward toward the domain.</text>
+</svg>
+<figcaption>The dependency rule: Data implements the interfaces that Domain defines, so you can swap Room or Retrofit without touching business logic.</figcaption>
+</figure>
+<div class="qa"><p class="q">Describe the layers.</p>
+<ul><li><b>Presentation</b>: UI and ViewModel. Depends on the domain layer.</li>
+<li><b>Domain</b>: <mark>a pure Kotlin module</mark> with entities, repository <em>interfaces</em> and use cases. It depends on nothing Android-specific.</li>
+<li><b>Data</b>: repository implementations, remote and local data sources, DTOs and database entities. Depends on the domain layer.</li></ul>
+<p><mark>The dependency rule: source-code dependencies point inward, toward the domain.</mark></p></div>
+<div class="qa"><p class="q">Do you always need use cases?</p>
+<p><mark>No.</mark> A use case earns its place when it holds real business logic, combines several repositories, or is reused by several ViewModels. A pass-through use case that only calls <code>repo.getX()</code> is boilerplate. Google's architecture guidance treats the domain layer as optional for this reason.</p></div>
+<pre><code>class GetFeedUseCase @Inject constructor(
+    private val posts: PostRepository,
+    private val users: UserRepository
+) {
+    operator fun invoke(): Flow&lt;List&lt;FeedItem&gt;&gt; =
+        combine(posts.observe(), users.observe()) { p, u -&gt; merge(p, u) }
+}
+// Models per layer: PostDto (network) -&gt; PostEntity (Room) -&gt; Post (domain) -&gt; PostUi (screen)</code></pre>
+<p class="tip"><b>Trap:</b> separate models per layer cost mapping code. Justify them: API changes should not leak into the UI. Over-engineering a small app is a red flag, so say you scale the structure to the project.</p>
+</section>
+
+<section class="topic">
+<h2>3. Repository pattern</h2>
+<p class="asks">Often asked as: “Why a repository?”, “What is the single source of truth?”, “How do you design caching and error handling?”</p>
+<div class="qa"><p class="q">What problem does it solve?</p>
+<p>It <mark>hides where data comes from</mark>, whether network, database, cache or files, behind one interface. ViewModels and use cases do not need to know. It also makes testing easy with a fake repository, and it centralises caching, mapping and error handling.</p></div>
+<div class="qa"><p class="q">How do you choose the source of truth?</p>
+<p><mark>The local database is the single source of truth.</mark> The UI observes the database through a Flow. The repository fetches from the network, writes to the database, and the UI updates automatically. The UI never reads a network response directly.</p>
+<pre><code>class ArticleRepositoryImpl @Inject constructor(
+    private val api: ArticleApi,
+    private val dao: ArticleDao
+) : ArticleRepository {
+    override fun observe(): Flow&lt;List&lt;Article&gt;&gt; =
+        dao.observeAll().map { rows -&gt; rows.map(ArticleEntity::toDomain) }
+
+    override suspend fun refresh(): Result&lt;Unit&gt; = runCatching {
+        dao.upsertAll(api.fetch().map(ArticleDto::toEntity))
+    }
+}</code></pre></div>
+<p class="tip"><b>Trap:</b> do not let the repository leak DTOs or Retrofit <code>Response</code> types upward. If you use <code>runCatching</code> inside coroutines, it swallows <code>CancellationException</code>: rethrow it. For pagination, Paging 3 with a <code>RemoteMediator</code> follows the same database-as-truth idea.</p>
+</section>
+
+<section class="topic">
+<h2>4. Dependency injection with Hilt</h2>
+<p class="asks">Often asked as: “Why constructor injection?”, “Hilt vs Dagger vs Koin”, “Scopes”, “@Binds vs @Provides”.</p>
+<div class="qa"><p class="q">What is DI, and why constructor injection?</p>
+<p>A class receives its dependencies instead of creating them. <mark>Constructor injection is preferred: dependencies are explicit, fields can be <code>val</code> and private, the class is easy to test with fakes, and it can never exist half-initialised.</mark> Field injection (<code>@Inject lateinit var</code>) is only for framework classes that you do not construct yourself, such as Activities, Fragments and Services.</p></div>
+<div class="qa"><p class="q">What are the Hilt basics?</p>
+<ul><li><code>@HiltAndroidApp</code> on the Application, <code>@AndroidEntryPoint</code> on Activities and Fragments, <code>@HiltViewModel</code> plus <code>@Inject constructor</code> on ViewModels.</li>
+<li><code>@Module</code> with <code>@InstallIn(SingletonComponent::class)</code>. <mark><code>@Binds</code> maps an interface to its implementation (cheaper, no generated body). <code>@Provides</code> creates third-party objects, such as Retrofit or Room, that you cannot annotate yourself.</mark></li>
+<li>Scopes: <code>@Singleton</code> (app), <code>@ActivityRetainedScoped</code> (survives rotation), <code>@ViewModelScoped</code>, <code>@ActivityScoped</code>. Unscoped bindings create a new instance each time.</li>
+<li>Qualifiers, such as <code>@IoDispatcher</code>, tell apart bindings of the same type.</li></ul>
+<pre><code>@Module
+@InstallIn(SingletonComponent::class)
+abstract class DataModule {
+    @Binds abstract fun bindRepo(impl: ArticleRepositoryImpl): ArticleRepository
+}
+
+@Module
+@InstallIn(SingletonComponent::class)
+object NetworkModule {
+    @Provides @Singleton fun provideRetrofit(): Retrofit = Retrofit.Builder().build()
+}</code></pre></div>
+<p class="tip"><b>Follow-up:</b> Hilt is Dagger with a standard Android component hierarchy. Its graph is <mark>validated at compile time</mark>, so errors show up in the build. Koin is a service locator that resolves at runtime: simpler to start with, but failures show up only when the app runs. Inject dispatchers so tests can replace them.</p>
+</section>
+
+<section class="topic">
+<h2>5. Lifecycle</h2>
+<p class="asks">Often asked as: “What is the order of callbacks?”, “Fragment vs view lifecycle”, “Rotation and process death”, “lifecycle-aware collection”.</p>
+<div class="qa"><p class="q">What is the Activity lifecycle?</p>
+<p><code>onCreate → onStart → onResume</code> (running), then <code>onPause → onStop → onDestroy</code>. Visible means started; interactive means resumed. Rotation destroys and recreates the Activity unless you handle <code>configChanges</code>. <mark><code>onSaveInstanceState</code> is called before <code>onStop</code></mark> on API 28 and later.</p></div>
+<div class="qa"><p class="q">What is special about Fragments?</p>
+<p>A Fragment has <mark>two lifecycles</mark>: the fragment itself (<code>onCreate</code> to <code>onDestroy</code>) and its view (<code>onCreateView</code> to <code>onDestroyView</code>). The fragment can outlive its view when it sits on the back stack. <mark>Null out the view binding in <code>onDestroyView</code></mark>, and collect flows with <code>viewLifecycleOwner</code>, never <code>this</code>.</p>
+<pre><code>viewLifecycleOwner.lifecycleScope.launch {
+    viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewModel.ui.collect(::render)      // cancelled on STOP, restarted on START
+    }
+}
+// Compose equivalent: val ui by viewModel.ui.collectAsStateWithLifecycle()</code></pre></div>
+<div class="qa"><p class="q">How does a ViewModel's lifecycle differ?</p>
+<p>It is created on first use through <code>by viewModels()</code> and lives until its owner is permanently finished. It survives rotation but <mark>not process death</mark>. You can test process death with the “Don't keep activities” developer option, or with <code>adb shell am kill</code>. Persist IDs and inputs with <code>SavedStateHandle</code>, and keep real data in Room.</p></div>
+<p class="tip"><b>Trap:</b> a plain <code>lifecycleScope.launch { flow.collect {} }</code> keeps collecting while the app is in the background. That wastes resources and can crash. Always use <code>repeatOnLifecycle</code> or <code>collectAsStateWithLifecycle</code>. Chapter {{ch:3}} covers this in depth.</p>
+</section>
+
+<section class="topic">
+<h2>6. State management: StateFlow, SharedFlow and LiveData</h2>
+<p class="asks">Often asked as: “StateFlow vs LiveData”, “How do you send one-time events?”, “stateIn and WhileSubscribed”.</p>
+<div class="table-wrap"><table><tr><th></th><th>StateFlow</th><th>SharedFlow</th><th>LiveData</th></tr>
+<tr><td>Initial value</td><td>Required</td><td>Not needed</td><td>Optional</td></tr>
+<tr><td>Replay</td><td>Always the latest value</td><td>Configurable (0 by default)</td><td>Latest value</td></tr>
+<tr><td>Duplicates</td><td>Dropped (equal values)</td><td>Kept</td><td>Kept</td></tr>
+<tr><td>Lifecycle-aware</td><td>No (use repeatOnLifecycle)</td><td>No</td><td>Yes</td></tr>
+<tr><td>Operators and threads</td><td>Full Flow operators, any thread</td><td>Full Flow operators, any thread</td><td>Main-thread centric</td></tr></table></div>
+<div class="qa"><p class="q">Which one for what?</p>
+<ul><li><b>StateFlow</b>: <mark>UI state</mark>. It always has a current value.</li>
+<li><b>SharedFlow</b>: events with no “current value”. <mark>Events can be lost if nobody is collecting</mark>, since the default replay is 0.</li>
+<li><b>LiveData</b>: legacy and Java-friendly, lifecycle-aware, Android-only. In new code prefer Flow, which also works in the domain and data layers and in Kotlin Multiplatform.</li></ul></div>
+<div class="qa"><p class="q">How do you handle one-time events such as a snackbar or navigation?</p>
+<p>The modern approach is to <mark>model the event as state and consume it</mark>. For example, an <code>errorMessage: String?</code> field is cleared once the UI has shown it. Nothing is lost on rotation or when nobody is collecting. Alternatives are a buffered <code>Channel</code> exposed with <code>receiveAsFlow()</code>, or a SharedFlow. Avoid the old SingleLiveEvent workaround.</p>
+<pre><code>val ui: StateFlow&lt;UiState&gt; = repo.observe()
+    .map { UiState.Success(it) as UiState }
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiState.Loading)</code></pre></div>
+<p class="tip"><b>Follow-up:</b> <mark><code>WhileSubscribed(5000)</code> keeps the upstream alive for 5 seconds</mark>, so a rotation does not restart it. It stops when the app goes to the background. Mutating a list in place emits nothing, because the reference is unchanged: always emit a new copy. <code>MutableStateFlow.update {}</code> is atomic.</p>
+</section>
+
+<section class="topic">
+<h2>7. Modularisation</h2>
+<p class="asks">Often asked as: “Why modularise?”, “How do feature modules talk to each other?”, “api vs implementation”, “dynamic features”.</p>
+<div class="qa"><p class="q">Why modularise, and how?</p>
+<p>Benefits: <mark>faster builds (parallel, and only changed modules recompile), enforced boundaries, team ownership, reuse and easier testing</mark>. A typical layout looks like this:</p>
+<pre><code>:app                      wiring, DI root, navigation host
+:feature:home             UI and ViewModel, depends on core only
+:feature:checkout
+:core:domain  :core:data  :core:network  :core:database
+:core:ui (design system)  :core:common  :core:testing</code></pre>
+<p><mark>Features must not depend on each other.</mark> They share code through core modules, and talk through navigation contracts, deep links or a small <code>:feature:x:api</code> module of interfaces, wired together in <code>:app</code> with Hilt.</p></div>
+<div class="qa"><p class="q">What about the Gradle details?</p>
+<ul><li><code>implementation</code> hides a dependency from consumers, which speeds up incremental builds. <code>api</code> exposes it transitively, so use it sparingly.</li>
+<li>Convention plugins in <code>build-logic</code> and a version catalog (<code>libs.versions.toml</code>) share configuration.</li>
+<li><b>Dynamic feature modules</b> are delivered on demand through Google Play to reduce install size. They are different from ordinary library modules.</li></ul></div>
+<p class="tip"><b>Trap:</b> too many tiny modules add configuration overhead. Avoid circular dependencies and a giant <code>:core:common</code> dumping ground. Modularise by feature first and by layer second. Hilt works across modules because the entry points in <code>:app</code> aggregate everything.</p>
+</section>
+
+<section class="topic">
+<h2>8. Offline support with Room and local data</h2>
+<p class="asks">Often asked as: “How do you design offline-first?”, “sync strategy”, “Room migrations”, “conflict handling”.</p>
+<figure class="diagram">
+<svg viewBox="0 0 680 190" role="img" aria-label="Offline-first flow: UI reads from Room; repository writes locally and WorkManager syncs with the server">
+<defs><marker id="arr-off" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--c)"/></marker></defs>
+<rect x="15" y="60" width="130" height="60" rx="12" class="bx2"/><text x="80" y="95" text-anchor="middle">UI (Flow)</text>
+<rect x="200" y="60" width="130" height="60" rx="12" class="bx"/><text x="265" y="88" text-anchor="middle">Room</text><text x="265" y="108" text-anchor="middle" class="sm">source of truth</text>
+<rect x="385" y="60" width="130" height="60" rx="12" class="bx"/><text x="450" y="88" text-anchor="middle">WorkManager</text><text x="450" y="108" text-anchor="middle" class="sm">pending sync</text>
+<rect x="545" y="60" width="120" height="60" rx="12" class="bx2"/><text x="605" y="95" text-anchor="middle">Server</text>
+<line x1="145" y1="90" x2="197" y2="90" class="arr" marker-end="url(#arr-off)"/>
+<line x1="330" y1="90" x2="382" y2="90" class="arr" marker-end="url(#arr-off)"/>
+<line x1="515" y1="90" x2="542" y2="90" class="arr" marker-end="url(#arr-off)"/>
+<text x="340" y="30" text-anchor="middle" class="sm">Writes go to Room first, then sync when the network allows.</text>
+<text x="340" y="172" text-anchor="middle" class="sm">Reads come from Room; a background refresh updates it.</text>
+</svg>
+<figcaption>Offline-first: the UI observes the database, so the app works without a network.</figcaption>
+</figure>
+<div class="qa"><p class="q">How do you design offline-first?</p>
+<p>Room is the <mark>single source of truth</mark>, and the UI reads only from the database through a Flow. Writes go to the database first (optimistic) and are queued for sync. Reads trigger a background refresh. Connectivity, observed with <code>ConnectivityManager.NetworkCallback</code>, decides <em>when</em> to sync. It does not decide whether the app works.</p></div>
+<div class="qa"><p class="q">How do you sync pending writes?</p>
+<p>Mark rows with a sync status such as <code>PENDING</code>, <code>SYNCED</code> or <code>FAILED</code>, or keep an outbox table. Push them with <mark><b>WorkManager</b>, which supports network constraints, exponential backoff, unique work, and survival across process death and reboot</mark>. Use idempotent requests with a client-generated ID so retries do not duplicate data. For conflicts, choose last-write-wins by timestamp or version, server-wins, or a field-level merge, depending on the product.</p>
+<pre><code>@Dao
+interface ArticleDao {
+    @Query("SELECT * FROM article ORDER BY ts DESC")
+    fun observeAll(): Flow&lt;List&lt;ArticleEntity&gt;&gt;
+
+    @Upsert
+    suspend fun upsertAll(items: List&lt;ArticleEntity&gt;)
+
+    @Transaction
+    @Query("SELECT * FROM author WHERE id = :id")
+    fun withPosts(id: Long): Flow&lt;AuthorWithPosts&gt;
+}</code></pre></div>
+<div class="qa"><p class="q">What are the Room essentials?</p>
+<ul><li>The components are <code>@Entity</code>, <code>@Dao</code> and <code>@Database</code>. Queries are <mark>verified at compile time</mark>. DAO functions marked <code>suspend</code> or returning Flow run off the main thread.</li>
+<li><mark><b>Migrations</b></mark>: bump the version and provide a <code>Migration</code> or an <code>AutoMigration</code>. Never ship <code>fallbackToDestructiveMigration()</code> for user data. Export schemas and test migrations.</li>
+<li>Add <code>@Index</code> on queried and foreign-key columns. Use <code>@Relation</code> or <code>@Embedded</code> with <code>@Transaction</code> for joins, and a <code>TypeConverter</code> for custom types.</li>
+<li>Other local storage: <b>DataStore</b> for preferences and small settings (it replaces SharedPreferences), files, and encrypted storage for secrets.</li></ul></div>
+<p class="tip"><b>Trap:</b> do not load huge tables at once; use Paging 3 with a <code>PagingSource</code>. Multi-step writes need a <code>@Transaction</code>. Keep database entities out of the UI layer. For cache freshness, store <code>lastFetched</code> and refresh when the data is stale.</p>
+</section>

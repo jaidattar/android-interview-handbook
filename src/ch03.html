@@ -1,0 +1,209 @@
+<section class="topic">
+<h2>1. launch vs async</h2>
+<p class="asks">Often asked as: “Which one returns a result?”, “How do exceptions differ?”, “How do you run two calls in parallel?”</p>
+<div class="qa"><p class="q">What is the difference?</p>
+<ul><li><code>launch</code> returns a <code>Job</code> and is <mark>fire-and-forget</mark>, with no result.</li>
+<li><code>async</code> returns a <code>Deferred&lt;T&gt;</code>, which is a Job that carries a result. <mark>You get the value with <code>await()</code></mark>. Use it for parallel decomposition.</li></ul>
+<p>Both start <mark>eagerly by default</mark>. <code>start = CoroutineStart.LAZY</code> delays the start until <code>start()</code> or <code>await()</code> is called.</p>
+<pre><code>suspend fun loadScreen() = coroutineScope {
+    val user = async { api.user() }      // both run in parallel
+    val feed = async { api.feed() }
+    Screen(user.await(), feed.await())   // total time is the max, not the sum
+}</code></pre></div>
+<div class="qa"><p class="q">How do exceptions behave?</p>
+<p><code>launch</code> propagates the exception to its parent immediately, which leads to the handler or a crash. <code>async</code> also cancels the parent in a normal scope, but the exception is rethrown at <code>await()</code>. Under <code>supervisorScope</code>, an <code>async</code> failure is delivered only at <code>await()</code>.</p></div>
+<p class="tip"><b>Trap:</b> calling <code>async { }.await()</code> immediately is just sequential code with extra overhead. For one call, use <code>withContext</code>. The right parallel pattern is to start all the <code>async</code> blocks first, then await them together with <code>awaitAll()</code>. Do not await inside the <code>map</code> itself.</p>
+</section>
+
+<section class="topic">
+<h2>2. coroutineScope vs supervisorScope</h2>
+<p class="asks">Often asked as: “If one child fails, what happens to its siblings?”, “SupervisorJob vs Job”.</p>
+<div class="table-wrap"><table><tr><th></th><th>coroutineScope</th><th>supervisorScope</th></tr>
+<tr><td>A child fails</td><td><mark>Cancels siblings and the scope, then rethrows</mark></td><td><mark>Siblings keep running</mark>; the failure belongs to that child</td></tr>
+<tr><td>Waits for children</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Where you handle failures</td><td>try/catch around the scope call</td><td>Inside each child (try/catch or a handler)</td></tr></table></div>
+<pre><code>supervisorScope {
+    launch { runCatchingCancellable { syncA() } }   // may fail on its own
+    launch { syncB() }                              // unaffected by syncA
+}</code></pre>
+<div class="qa"><p class="q">What is a SupervisorJob?</p>
+<p>A Job where <mark>a child's failure does not propagate to the parent or to siblings</mark>. <code>viewModelScope</code> is built as <code>SupervisorJob() + Dispatchers.Main.immediate</code>. Watch the placement: <code>launch(SupervisorJob()) { … }</code> is a bug, because the new supervisor replaces the parent and breaks the structure. Pass the supervisor to the <em>scope</em>, not to the child builder.</p></div>
+<p class="tip"><b>Follow-up:</b> both forms suspend until every child finishes. Scope functions never return early. A failing <code>async</code> child inside <code>supervisorScope</code> does not cancel its siblings, but you must handle the failure at <code>await()</code>.</p>
+</section>
+
+<section class="topic">
+<h2>3. Structured concurrency</h2>
+<p class="asks">Often asked as: “What is it, and why does it matter?”, “Why avoid GlobalScope?”, “How does the Job hierarchy work?”</p>
+<figure class="diagram">
+<svg viewBox="0 0 680 220" role="img" aria-label="A parent scope with three children; a failure in one child cancels the rest">
+<defs><marker id="arr-sc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--c)"/></marker></defs>
+<rect x="250" y="16" width="180" height="50" rx="12" class="bx"/><text x="340" y="38" text-anchor="middle">viewModelScope</text><text x="340" y="56" text-anchor="middle" class="sm">parent Job</text>
+<line x1="300" y1="66" x2="130" y2="118" class="ln"/><line x1="340" y1="66" x2="340" y2="118" class="ln"/><line x1="380" y1="66" x2="550" y2="118" class="ln"/>
+<rect x="60" y="118" width="140" height="50" rx="10" class="bx2"/><text x="130" y="140" text-anchor="middle">loadUser</text><text x="130" y="158" text-anchor="middle" class="sm">child Job</text>
+<rect x="270" y="118" width="140" height="50" rx="10" class="bx2"/><text x="340" y="140" text-anchor="middle">loadFeed</text><text x="340" y="158" text-anchor="middle" class="sm">child Job, throws</text>
+<rect x="480" y="118" width="140" height="50" rx="10" class="bx2"/><text x="550" y="140" text-anchor="middle">loadBadges</text><text x="550" y="158" text-anchor="middle" class="sm">child Job</text>
+<path d="M340,172 L340,198" class="arr" marker-end="url(#arr-sc)"/>
+<text x="340" y="212" text-anchor="middle" class="sm">Default scope: the failure cancels the parent and the other children.</text>
+</svg>
+<figcaption>Default behaviour of a coroutineScope or a plain scope: a child's failure cancels its siblings and the parent. Use supervisorScope to change that.</figcaption>
+</figure>
+<div class="qa"><p class="q">Explain it.</p>
+<p>Every coroutine runs inside a <b>CoroutineScope</b> and becomes a child of that scope's <code>Job</code>. The rules are:</p>
+<ul><li><mark>A parent does not complete until all its children complete.</mark></li>
+<li><mark>Cancelling a parent cancels all of its children.</mark></li>
+<li><mark>A child's failure cancels the parent and its siblings,</mark> unless the hierarchy is supervised.</li></ul>
+<p>The result: no leaked work, no forgotten threads, errors always reach someone, and the lifetime of the work is tied to a component such as <code>viewModelScope</code> or <code>lifecycleScope</code>.</p></div>
+<div class="qa"><p class="q">What is a CoroutineContext?</p>
+<p>An indexed set of elements: a <code>Job</code>, a <code>Dispatcher</code>, a <code>CoroutineName</code> and a <code>CoroutineExceptionHandler</code>, combined with <code>+</code>. A child inherits the parent's context but gets <b>its own new Job</b>. Elements passed to the builder override the inherited ones.</p>
+<pre><code>val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineName("sync"))
+scope.launch { /* ... */ }
+scope.cancel()            // cancels everything; this scope cannot be reused
+// GlobalScope.launch { } is unstructured and lives as long as the process: avoid it</code></pre></div>
+<p class="tip"><b>Trap:</b> creating a <code>CoroutineScope(...)</code> inside a class and never cancelling it is a leak. In Android, use lifecycle-bound scopes. For app-wide work, inject an application scope, or use WorkManager if the work must survive the process.</p>
+</section>
+
+<section class="topic">
+<h2>4. Dispatchers: Main, IO and Default</h2>
+<p class="asks">Often asked as: “Which one for what?”, “What are the thread pool sizes?”, “withContext”, “Main.immediate”.</p>
+<div class="table-wrap"><table><tr><th>Dispatcher</th><th>Use for</th><th>Threads</th></tr>
+<tr><td><b>Main</b></td><td>UI updates and light work</td><td>The single main thread</td></tr>
+<tr><td><b>IO</b></td><td><mark>Blocking I/O</mark>: network, disk, database, files</td><td>Elastic, up to <mark>64</mark> (or the core count, if higher)</td></tr>
+<tr><td><b>Default</b></td><td><mark>CPU-bound</mark> work: sorting, parsing, diffing, bitmap work</td><td>Equal to the number of CPU cores (minimum 2)</td></tr>
+<tr><td><b>Unconfined</b></td><td>Rare; tests and special cases</td><td>Runs in the caller's thread until the first suspension</td></tr></table></div>
+<div class="qa"><p class="q">What are the key facts?</p>
+<ul><li><code>Dispatchers.IO</code> and <code>Default</code> <mark>share the same thread pool</mark>, so switching between them is often cheap.</li>
+<li><code>withContext(Dispatchers.IO) { }</code> switches, <mark>suspends until the block completes</mark>, then returns to the caller's dispatcher. Suspend functions should be <b>main-safe</b>: callers should not need to know which dispatcher to use.</li>
+<li><code>Dispatchers.Main.immediate</code> runs inline when already on the main thread. That is why <code>viewModelScope</code> state updates can appear synchronously.</li>
+<li><code>limitedParallelism(n)</code> gives a bounded view, for example <code>IO.limitedParallelism(1)</code> for a serial database writer.</li></ul>
+<pre><code>suspend fun parse(json: String) = withContext(Dispatchers.Default) { heavyParse(json) }
+
+class Repository @Inject constructor(
+    @IoDispatcher private val io: CoroutineDispatcher   // injected, so tests can replace it
+)</code></pre></div>
+<p class="tip"><b>Trap:</b> blocking calls such as <code>Thread.sleep</code>, JDBC or <code>runBlocking</code> on <code>Default</code> starve CPU work. On <code>Main</code> they cause ANRs. Hard-coded dispatchers make tests flaky: inject them and use <code>StandardTestDispatcher</code> with <code>runTest</code>.</p>
+</section>
+
+<section class="topic">
+<h2>5. Exception handling</h2>
+<p class="asks">Often asked as: “Why doesn't my try/catch catch this?”, “CoroutineExceptionHandler”, “CancellationException”.</p>
+<div class="qa"><p class="q">How are exceptions propagated?</p>
+<ul><li><code>launch</code>: an uncaught exception propagates up to the root, then reaches the <code>CoroutineExceptionHandler</code>, or crashes the app.</li>
+<li><code>async</code>: the exception is stored in the <code>Deferred</code> and thrown at <code>await()</code>. In a normal scope it still propagates to the parent.</li>
+<li><mark><code>try { launch { throw X() } } catch</code> does NOT work</mark>, because the exception happens in the child, not in the call to launch. Put the try/catch <em>inside</em> the coroutine.</li></ul>
+<pre><code>viewModelScope.launch {
+    try {
+        repository.refresh()
+    } catch (e: CancellationException) {
+        throw e                                   // never swallow cancellation
+    } catch (e: IOException) {
+        _ui.update { it.copy(error = e.message) }
+    }
+}
+
+val handler = CoroutineExceptionHandler { _, e -&gt; log(e) }   // last resort, root coroutines only
+scope.launch(handler) { /* ... */ }</code></pre></div>
+<div class="qa"><p class="q">What about CancellationException?</p>
+<p><mark>It is how cancellation is signalled, and it is not treated as a failure.</mark> It does not cancel the parent and it does not reach the handler. Catching <code>Exception</code> or <code>Throwable</code>, or wrapping suspend calls in <code>runCatching</code>, swallows it, and the coroutine keeps running after it was cancelled. <b>Always rethrow it.</b></p></div>
+<p class="tip"><b>Follow-up:</b> <code>CoroutineExceptionHandler</code> works only on the root coroutine, or a direct child of a supervisor, and not on <code>async</code>. For cleanup use <code>finally</code>. If the cleanup itself suspends, wrap it in <code>withContext(NonCancellable)</code>. In Flow, use <code>.catch {}</code> (which catches only upstream errors) and <code>onCompletion</code>.</p>
+</section>
+
+<section class="topic">
+<h2>6. StateFlow vs SharedFlow</h2>
+<p class="asks">Often asked as: “When do you use each?”, “replay and buffer”, “Why was my event lost?”. Chapter {{ch:2}} covers the basics; this is the internals.</p>
+<div class="table-wrap"><table><tr><th></th><th>StateFlow</th><th>SharedFlow</th></tr>
+<tr><td>What it is</td><td>A SharedFlow with replay 1, conflated and deduplicated</td><td>A general hot stream</td></tr>
+<tr><td>Initial value</td><td>Required</td><td>None</td></tr>
+<tr><td>Configuration</td><td>None</td><td><code>replay</code>, <code>extraBufferCapacity</code>, <code>onBufferOverflow</code></td></tr>
+<tr><td>Has <code>.value</code></td><td>Yes, readable and writable</td><td>No, use <code>tryEmit</code> or <code>emit</code></td></tr>
+<tr><td>Use for</td><td><mark>State</mark></td><td><mark>Events</mark></td></tr></table></div>
+<div class="qa"><p class="q">What are the gotchas?</p>
+<ul><li>StateFlow <mark>skips equal values</mark> (it uses equals), and a slow collector can miss intermediate values because of conflation. That suits state, but not “every click”.</li>
+<li>A SharedFlow with <code>replay = 0</code> and <b>no subscribers</b> <mark>drops the emission</mark>. <code>emit</code> suspends only when a configured buffer is full.</li>
+<li><code>stateIn(scope, WhileSubscribed(5000), initial)</code> and <code>shareIn</code> convert a cold Flow into a hot one.</li></ul>
+<pre><code>private val _events = MutableSharedFlow&lt;Event&gt;(
+    extraBufferCapacity = 1,
+    onBufferOverflow = BufferOverflow.DROP_OLDEST
+)
+val events = _events.asSharedFlow()
+
+_state.update { it.copy(loading = false) }   // atomic read-modify-write</code></pre></div>
+<p class="tip"><b>Trap:</b> <code>_state.value = _state.value.copy(...)</code> from several coroutines can lose updates. Use <code>update {}</code>. Neither type is lifecycle-aware on its own, so collect them with <code>repeatOnLifecycle</code>.</p>
+</section>
+
+<section class="topic">
+<h2>7. Cold Flow vs hot Flow</h2>
+<p class="asks">Often asked as: “What starts a Flow?”, “Does each collector get its own execution?”, “What does flowOn do?”</p>
+<div class="table-wrap"><table><tr><th></th><th>Cold: flow {}, flowOf, asFlow</th><th>Hot: StateFlow, SharedFlow, channel-based</th></tr>
+<tr><td>When it starts</td><td><mark>Only when collected</mark></td><td>Active regardless of collectors</td></tr>
+<tr><td>Per collector</td><td><mark>Each collector re-runs the producer</mark></td><td>Collectors share one producer</td></tr>
+<tr><td>Completes</td><td>Yes, when the block ends</td><td>Never (StateFlow and SharedFlow)</td></tr>
+<tr><td>Examples</td><td>A Room query, a network call</td><td>UI state, an event bus</td></tr></table></div>
+<pre><code>val cold = flow { emit(api.fetch()) }          // 2 collectors = 2 network calls
+val hot = cold.shareIn(
+    viewModelScope, SharingStarted.WhileSubscribed(5_000), replay = 1
+)                                               // 2 collectors = 1 network call
+
+// flowOn changes only the UPSTREAM operators:
+flow { emit(compute()) }.flowOn(Dispatchers.Default)</code></pre>
+<div class="qa"><p class="q">Any other points?</p>
+<ul><li><mark><code>flowOn</code> affects only the operators upstream of it.</mark> Never use <code>withContext</code> around <code>emit</code>: that breaks context preservation and throws.</li>
+<li>Flow is sequential by default. <code>buffer()</code> and <code>conflate()</code> decouple producer and consumer. <code>flatMapLatest</code>, <code>combine</code> and <code>zip</code> compose flows.</li>
+<li><code>callbackFlow { …; awaitClose { unregister() } }</code> wraps callback APIs. <mark>Always call <code>awaitClose</code></mark>, or the flow ends immediately and the listener leaks.</li></ul></div>
+<p class="tip"><b>Trap:</b> exposing a cold Flow from a ViewModel to the UI means every re-collection restarts the work. Convert it to a StateFlow with <code>stateIn</code>.</p>
+</section>
+
+<section class="topic">
+<h2>8. collect vs collectLatest</h2>
+<p class="asks">Often asked as: “What happens to a slow collector?”, “search as you type”, “conflate vs collectLatest”.</p>
+<div class="qa"><p class="q">What is the difference?</p>
+<ul><li><code>collect { }</code> <mark>processes every value, one after another</mark>. A slow block makes the producer wait, which is backpressure through suspension.</li>
+<li><code>collectLatest { }</code>: when a new value arrives, <mark>the running block for the previous value is cancelled</mark> and restarted with the new value. Only the latest value is fully processed.</li></ul>
+<pre><code>queryFlow
+    .debounce(300)
+    .distinctUntilChanged()
+    .collectLatest { query -&gt; showResults(repository.search(query)) }  // old search cancelled
+
+// The same idea as an operator:
+queryFlow.flatMapLatest { repository.searchFlow(it) }
+// conflate() skips intermediate values but does NOT cancel the running block</code></pre></div>
+<div class="table-wrap"><table><tr><th>Operator</th><th>Behaviour with a slow consumer</th></tr>
+<tr><td><code>collect</code></td><td>The producer suspends; every value is processed in order</td></tr>
+<tr><td><code>buffer()</code></td><td>The producer runs ahead, and values are queued</td></tr>
+<tr><td><code>conflate()</code></td><td>Drops intermediate values and keeps the newest; the current block finishes</td></tr>
+<tr><td><code>collectLatest</code></td><td>Cancels the current block when a newer value arrives</td></tr></table></div>
+<p class="tip"><b>Trap:</b> <mark>do not use <code>collectLatest</code> when the block must finish</mark>, such as saving to a database, sending analytics or processing a payment. It would be cancelled halfway. The work inside the block must also reach a suspension point for cancellation to take effect.</p>
+</section>
+
+<section class="topic">
+<h2>9. Cancellation and lifecycle-aware collection</h2>
+<p class="asks">Often asked as: “How does cooperative cancellation work?”, “repeatOnLifecycle vs launchWhenStarted”, “collection in Compose”.</p>
+<div class="qa"><p class="q">How does cancellation work?</p>
+<p><mark>Cancellation is cooperative.</mark> <code>job.cancel()</code> marks the Job as cancelled. The coroutine stops at the next <b>suspension point</b> that checks for it, such as <code>delay</code>, <code>yield</code>, <code>withContext</code>, Flow operators or <code>ensureActive()</code>. A tight CPU loop never stops on its own unless it checks <code>isActive</code> or calls <code>ensureActive()</code>.</p>
+<pre><code>launch(Dispatchers.Default) {
+    for (file in files) {
+        ensureActive()                     // cooperative check inside the loop
+        process(file)
+    }
+    try {
+        doWork()
+    } finally {
+        withContext(NonCancellable) { cleanup() }   // cleanup still runs after cancel
+    }
+}
+withTimeout(3_000) { api.call() }            // throws TimeoutCancellationException
+withTimeoutOrNull(3_000) { api.call() }      // returns null instead</code></pre>
+<p>Blocking calls such as <code>Thread.sleep</code> or a blocking <code>InputStream.read</code> are <b>not cancellable</b> by themselves.</p></div>
+<div class="qa"><p class="q">How do you collect lifecycle-aware?</p>
+<p>Collecting inside <code>lifecycleScope.launch { flow.collect {} }</code> keeps collecting while the app is in the background, which wastes resources and keeps hot upstreams active. The correct patterns are:</p>
+<pre><code>// Views
+viewLifecycleOwner.lifecycleScope.launch {
+    viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        launch { viewModel.ui.collect(::render) }      // one launch per flow
+        launch { viewModel.events.collect(::handle) }
+    }
+}
+// Compose
+val ui by viewModel.ui.collectAsStateWithLifecycle()</code></pre>
+<p><mark><code>repeatOnLifecycle</code> cancels its block at STOP and relaunches it at START.</mark> The older <code>launchWhenStarted</code> only suspends, so the upstream stays active, and it is deprecated. Combine this with <code>WhileSubscribed(5000)</code> in the ViewModel, so the upstream stops when the UI is gone but survives rotation.</p></div>
+<p class="tip"><b>Trap:</b> inside <code>repeatOnLifecycle</code>, the first <code>collect</code> never returns, so a second <code>collect</code> placed after it never runs. Use separate <code>launch</code> blocks. In Fragments, use <code>viewLifecycleOwner</code>, not <code>this</code>. Test cancellation with <code>runTest</code> and <code>advanceTimeBy</code>.</p>
+</section>

@@ -1,0 +1,211 @@
+<section class="topic">
+<h2>1. val vs var</h2>
+<p class="asks">Often asked as: “Is val immutable?”, “val vs const val”, “lateinit vs lazy”.</p>
+<div class="qa"><p class="q">Is val immutable?</p>
+<p><mark>No. val is a read-only reference, not an immutable object.</mark> <code>val list = mutableListOf(1)</code> can still be mutated. In bytecode, a <code>val</code> is a private final field plus a getter; a <code>var</code> adds a setter. A <code>val</code> with a custom getter has <mark>no backing field</mark> and is recomputed on every access.</p></div>
+<div class="qa"><p class="q">val vs const val?</p>
+<p><code>const val</code> is a <mark>compile-time constant</mark>. It must be a primitive or String, declared at top level or inside an object or companion object, and it is inlined at call sites. A plain <code>val</code> is initialised at runtime. Use <code>const</code> for annotation arguments and <code>when</code> branch labels.</p></div>
+<div class="qa"><p class="q">lateinit vs by lazy?</p>
+<ul><li><code>lateinit var</code>: mutable, non-null, not for primitives. Reading it too early throws <code>UninitializedPropertyAccessException</code>. Check with <code>::x.isInitialized</code>. Typical use: dependency injection and view binding.</li>
+<li><code>by lazy</code>: <mark>val only, computed once on first access, thread-safe by default</mark>. Modes: <code>SYNCHRONIZED</code> (default), <code>PUBLICATION</code>, and <code>NONE</code> (fastest, single-thread only).</li></ul></div>
+<pre><code>val a = listOf(1)              // read-only reference
+var b = listOf(1)              // reference can be reassigned
+const val TAG = "Main"         // compile-time constant
+val heavy by lazy { parse() }  // computed once, on first use</code></pre>
+<p class="tip"><b>Trap:</b> smart casts work on local <code>val</code>s, but not on <code>var</code> properties (they could change between the check and the use), on <code>val</code> properties with a custom getter, or on properties from another module.</p>
+</section>
+
+<section class="topic">
+<h2>2. == vs ===</h2>
+<p class="asks">Often asked as: “Structural vs referential equality”, “the Integer cache puzzle”, “the equals and hashCode contract”.</p>
+<div class="qa"><p class="q">What is the difference?</p>
+<p><code>==</code> is <mark>structural equality</mark>. It compiles to a null-safe call to <code>equals()</code>. <code>===</code> is <mark>referential equality</mark>: it checks whether both sides are the same object. For primitives the two behave the same.</p></div>
+<div class="qa"><p class="q">What does this print?</p>
+<pre><code>val a: Int? = 127; val b: Int? = 127
+println(a === b)   // true  (boxed Integer cache covers -128..127)
+val c: Int? = 1000; val d: Int? = 1000
+println(c === d)   // false (two separate boxed objects)
+println(c == d)    // true</code></pre>
+<p><mark>Never use === on boxed numbers.</mark> Kotlin warns about it for good reason.</p></div>
+<div class="qa"><p class="q">Is there a Double edge case?</p>
+<p>When the static type is <code>Double</code>, <code>==</code> follows IEEE 754: <code>NaN == NaN</code> is false and <code>0.0 == -0.0</code> is true. When the static type is <code>Any</code>, <code>Comparable</code> or a generic, it uses <code>equals()</code>, where <mark>NaN equals NaN and 0.0 does not equal -0.0</mark>.</p></div>
+<p class="tip"><b>Follow-up:</b> if you override <code>equals</code> you must override <code>hashCode</code> too (equal objects must have equal hashes), or HashMap and HashSet lookups fail. Data classes do both for you.</p>
+</section>
+
+<section class="topic">
+<h2>3. Data classes and sealed classes</h2>
+<p class="asks">Often asked as: “When do you use a data class vs a sealed class?”, “Modelling UI state”, “sealed vs enum”.</p>
+<div class="qa"><p class="q">What does a data class generate?</p>
+<p><code>equals</code>, <code>hashCode</code>, <code>toString</code>, <code>copy</code> and <code>componentN</code>, <mark>all from primary-constructor properties only</mark>. Body properties are ignored. It needs at least one <code>val</code> or <code>var</code> parameter and cannot be open, abstract, sealed or inner. <mark><code>copy()</code> is shallow</mark>: nested mutable objects are shared between copies.</p></div>
+<div class="qa"><p class="q">What is a sealed class and why use one?</p>
+<p>A <mark>restricted hierarchy</mark>: all direct subclasses are known at compile time, in the same package and module. A <code>when</code> over it is <mark>exhaustive without else</mark>, and adding a new subtype breaks the build wherever it is not handled. Prefer <code>sealed interface</code> when subtypes need other parents, and <code>data object</code> for stateless cases.</p>
+<pre><code>sealed interface UiState {
+    data object Loading : UiState
+    data class Success(val items: List&lt;Item&gt;) : UiState
+    data class Error(val message: String) : UiState
+}
+
+fun render(state: UiState) = when (state) {
+    UiState.Loading      -&gt; showSpinner()
+    is UiState.Success   -&gt; showList(state.items)
+    is UiState.Error     -&gt; showError(state.message)
+}</code></pre></div>
+<div class="qa"><p class="q">Sealed or enum?</p>
+<p>An enum is a fixed set of <mark>single instances</mark> that all share the same shape. A sealed hierarchy is a fixed set of <mark>types</mark>, each able to carry different state, with many instances.</p></div>
+<p class="tip"><b>Trap:</b> a mutable <code>var</code> inside a data class used as a HashMap or HashSet key changes its hash after insertion, and the entry becomes unreachable. Arrays inside data classes compare by reference. In Compose, unstable types such as <code>List</code> cause extra recomposition; see Chapter {{ch:4}}.</p>
+</section>
+
+<section class="topic">
+<h2>4. inline, noinline and crossinline</h2>
+<p class="asks">Often asked as: “Why does inline exist?”, “non-local return”, “reified types”. A favourite senior-level question.</p>
+<div class="qa"><p class="q">What does inline do?</p>
+<p>The compiler <mark>copies the function body and each lambda body into the call site</mark>. That avoids allocating a <code>Function</code> object, avoids a virtual call, and allows a <mark>non-local return</mark> from the lambda. The cost is bytecode size, so use it for small functions that take lambdas, such as <code>let</code>, <code>run</code>, <code>apply</code>, <code>repeat</code> and <code>measureTimeMillis</code>.</p></div>
+<div class="qa"><p class="q">noinline vs crossinline?</p>
+<ul><li><b>noinline</b>: this lambda parameter is <mark>not inlined</mark>, so you can store it or pass it to a non-inline function.</li>
+<li><b>crossinline</b>: the lambda is inlined, but <mark>a non-local return is forbidden</mark>. You need it when the lambda runs inside another context, such as a Runnable or an object expression, where a return would be illegal.</li></ul>
+<pre><code>inline fun runTwice(
+    a: () -&gt; Unit,                     // inlined
+    noinline b: () -&gt; Unit,            // kept as an object, can be stored
+    crossinline c: () -&gt; Unit          // inlined, but no 'return' inside
+) {
+    val r = Runnable { c() }             // why crossinline is required here
+    saved = b
+}
+
+inline fun &lt;reified T&gt; String.parseAs(): T = Json.decodeFromString(this)</code></pre></div>
+<p class="tip"><b>Follow-up:</b> <mark>reified</mark> type parameters work only in inline functions, because the type is substituted at each call site, which avoids type erasure. A public inline function cannot touch non-public API unless it is marked <code>@PublishedApi</code>. Inlining a function with no lambda parameters gives little benefit, and the compiler warns about it.</p>
+</section>
+
+<section class="topic">
+<h2>5. Extension functions</h2>
+<p class="asks">Often asked as: “How are they compiled?”, “Can you override them?”, “member vs extension”.</p>
+<div class="qa"><p class="q">How do they work?</p>
+<p>They compile to <mark>static methods that take the receiver as the first parameter</mark>. For example, <code>fun View.gone()</code> becomes <code>ViewKt.gone(View)</code>. They do not modify the class, and they cannot access <code>private</code> or <code>protected</code> members.</p></div>
+<div class="qa"><p class="q">Are they polymorphic?</p>
+<p><mark>No. They are resolved by the declared type</mark>, not the runtime type. A <b>member always wins</b> over an extension with the same signature.</p>
+<pre><code>open class A
+class B : A()
+fun A.hi() = "A"
+fun B.hi() = "B"
+val x: A = B()
+println(x.hi())   // prints "A": static dispatch on the declared type</code></pre></div>
+<div class="qa"><p class="q">Other facts worth knowing</p>
+<ul><li>Extension <b>properties</b> have no backing field, only a getter and an optional setter.</li>
+<li>The receiver can be nullable: <code>fun String?.orEmpty()</code>.</li>
+<li>Scope follows imports, so put Android helpers such as <code>Context.dp</code> or <code>View.show()</code> in focused files.</li></ul></div>
+<p class="tip"><b>Trap:</b> extensions on <code>Any</code> or <code>String</code> clutter autocomplete for the whole team. They are also hard to mock in unit tests, where <code>mockkStatic</code> may be needed.</p>
+</section>
+
+<section class="topic">
+<h2>6. Higher-order functions and lambdas</h2>
+<p class="asks">Often asked as: “What are function types under the hood?”, “closures and leaks”, “scope functions”, “DSLs”.</p>
+<div class="qa"><p class="q">What is a higher-order function?</p>
+<p>A function that <mark>takes or returns another function</mark>. A function type such as <code>(Int) -&gt; String</code> compiles to the interface <code>Function1&lt;Int, String&gt;</code>. A non-inline lambda is an object. <mark>A capturing lambda allocates on each creation; a non-capturing lambda is a singleton.</mark></p></div>
+<div class="qa"><p class="q">What is a closure?</p>
+<p>A lambda that captures variables from its enclosing scope. Captured <code>var</code>s are wrapped in a <code>Ref</code> object so they can be changed. <mark>Android leak risk:</mark> a long-lived lambda that captures an Activity or View keeps it alive.</p></div>
+<div class="qa"><p class="q">Which scope function should I use?</p>
+<div class="table-wrap"><table><tr><th>Function</th><th>Object is</th><th>Returns</th></tr>
+<tr><td><code>let</code></td><td><code>it</code></td><td>lambda result</td></tr>
+<tr><td><code>run</code></td><td><code>this</code></td><td>lambda result</td></tr>
+<tr><td><code>with</code></td><td><code>this</code></td><td>lambda result</td></tr>
+<tr><td><code>apply</code></td><td><code>this</code></td><td>the object itself</td></tr>
+<tr><td><code>also</code></td><td><code>it</code></td><td>the object itself</td></tr></table></div>
+<p><mark>Receiver lambdas</mark> (<code>T.() -&gt; Unit</code>) are the basis of DSLs such as <code>buildString</code>, the Gradle Kotlin DSL and Compose.</p>
+<pre><code>fun interface Clicker { fun click(v: View) }   // SAM conversion
+button.setOnClickListener { println("hi") }
+
+val html = buildString { append("&lt;p&gt;"); append(text); append("&lt;/p&gt;") }</code></pre></div>
+<p class="tip"><b>Trap:</b> a plain <code>return</code> inside a non-inline lambda is illegal; use a labelled return such as <code>return@forEach</code>. Inside an inline lambda, a plain <code>return</code> exits the <em>enclosing</em> function.</p>
+</section>
+
+<section class="topic">
+<h2>7. Null safety</h2>
+<p class="asks">Often asked as: “Platform types”, “Why is !! a smell?”, “How can an NPE still happen in Kotlin?”.</p>
+<div class="qa"><p class="q">How does Kotlin handle null?</p>
+<p>Nullability is <mark>part of the type system</mark>: <code>String</code> and <code>String?</code> are different types. The main tools are <code>?.</code>, <code>?:</code>, <code>?.let</code>, <code>as?</code>, smart casts, and <code>requireNotNull</code> or <code>checkNotNull</code>. The compiler inserts parameter null checks into public functions.</p></div>
+<div class="qa"><p class="q">How can an NPE still happen?</p>
+<ul><li><b>!!</b>, or a <code>lateinit</code> read before initialisation.</li>
+<li><mark>Platform types</mark> (<code>String!</code>) from Java code without nullability annotations: the compiler trusts you.</li>
+<li><mark>Reflection and serialisation</mark> (Gson, Parcel, reflection-based libraries) can put null into non-null fields, bypassing constructor defaults.</li>
+<li>Calling an overridable member from a constructor, before the subclass has initialised its fields.</li></ul></div>
+<pre><code>val len = name?.length ?: 0
+user?.let { show(it) } ?: showEmpty()
+fun fail(message: String): Nothing = throw IllegalStateException(message)
+val id = intent.getStringExtra("id") ?: error("id is required")</code></pre>
+<p class="tip"><b>Follow-up:</b> <code>Nothing</code> is the bottom type, a function that never returns. <code>Unit</code> is a real singleton object. Prefer <code>?: error("…")</code> over <code>!!</code> so a crash carries a useful message.</p>
+</section>
+
+<section class="topic">
+<h2>8. Collections: List, Set and Map</h2>
+<p class="asks">Often asked as: “Read-only vs immutable”, “Which implementation backs listOf?”, “Sequence vs List”.</p>
+<div class="qa"><p class="q">What are the differences?</p>
+<ul><li><b>List</b>: ordered and indexed, duplicates allowed. ArrayList gives O(1) index access.</li>
+<li><b>Set</b>: unique elements with no index. HashSet is unordered, <mark>LinkedHashSet keeps insertion order</mark>, TreeSet is sorted in O(log n).</li>
+<li><b>Map</b>: unique keys mapped to values. HashMap is O(1) on average, LinkedHashMap keeps insertion order, TreeMap is sorted. A Map is not a Collection.</li></ul></div>
+<div class="qa"><p class="q">Read-only or immutable?</p>
+<p><code>List</code> is a <mark>read-only view, not an immutable collection</mark>. Another reference to the same <code>MutableList</code> can still change it, and a cast can expose that. <code>listOf()</code> returns a read-only implementation, and <code>setOf</code> and <code>mapOf</code> return the Linked versions so order is kept. For guaranteed immutability use <code>kotlinx.collections.immutable</code>, which also helps Compose stability.</p></div>
+<div class="qa"><p class="q">Collection or Sequence?</p>
+<p>Collection operators are <mark>eager</mark>: each step builds an intermediate list. <code>asSequence()</code> is <mark>lazy, and each element flows through the whole chain</mark>. Sequences help with large data and short-circuit operations like <code>first</code>, and they can be slower for small lists.</p></div>
+<p class="tip"><b>Trap:</b> modifying a collection while iterating over it throws <code>ConcurrentModificationException</code>. Use <code>removeAll</code> or an iterator's <code>remove</code>. On Android, <code>ArrayMap</code> and <code>SparseArray</code> save memory for small maps with primitive keys.</p>
+</section>
+
+<section class="topic">
+<h2>9. How HashMap works internally</h2>
+<p class="asks">Often asked as: “Walk me through put and get”, “collisions”, “resizing”, “HashMap vs ConcurrentHashMap”. Almost guaranteed to come up.</p>
+<figure class="diagram" style="--c:#b8508c">
+<svg viewBox="0 0 680 230" role="img" aria-label="HashMap buckets with a collision chain">
+<defs><marker id="arr-hm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--c)"/></marker></defs>
+<text x="20" y="34" class="sm">key "apple"</text>
+<rect x="20" y="44" width="120" height="34" rx="8" class="bx"/><text x="80" y="66" text-anchor="middle">hashCode()</text>
+<line x1="140" y1="61" x2="186" y2="61" class="arr" marker-end="url(#arr-hm)"/>
+<rect x="190" y="44" width="150" height="34" rx="8" class="bx"/><text x="265" y="66" text-anchor="middle">(n - 1) and hash</text>
+<line x1="340" y1="61" x2="376" y2="61" class="arr" marker-end="url(#arr-hm)"/>
+<rect x="380" y="44" width="110" height="34" rx="8" class="bx"/><text x="435" y="66" text-anchor="middle">bucket 3</text>
+<g>
+<rect x="20" y="120" width="56" height="30" rx="6" class="bx2"/><text x="48" y="140" text-anchor="middle" class="sm">0</text>
+<rect x="84" y="120" width="56" height="30" rx="6" class="bx2"/><text x="112" y="140" text-anchor="middle" class="sm">1</text>
+<rect x="148" y="120" width="56" height="30" rx="6" class="bx2"/><text x="176" y="140" text-anchor="middle" class="sm">2</text>
+<rect x="212" y="120" width="56" height="30" rx="6" class="bx"/><text x="240" y="140" text-anchor="middle">3</text>
+<rect x="276" y="120" width="56" height="30" rx="6" class="bx2"/><text x="304" y="140" text-anchor="middle" class="sm">4</text>
+<rect x="340" y="120" width="56" height="30" rx="6" class="bx2"/><text x="368" y="140" text-anchor="middle" class="sm">5</text>
+<rect x="404" y="120" width="56" height="30" rx="6" class="bx2"/><text x="432" y="140" text-anchor="middle" class="sm">6</text>
+<rect x="468" y="120" width="56" height="30" rx="6" class="bx2"/><text x="496" y="140" text-anchor="middle" class="sm">7</text>
+</g>
+<line x1="240" y1="110" x2="240" y2="118" class="ln"/>
+<rect x="520" y="120" width="130" height="30" rx="6" class="bx"/><text x="585" y="140" text-anchor="middle" class="sm">"apple" → 1</text>
+<line x1="268" y1="135" x2="518" y2="135" class="ln" stroke-dasharray="5 4"/>
+<text x="20" y="196" class="sm">Bucket 3 holds a chain: a collision. Search compares hash first, then equals().</text>
+<text x="20" y="216" class="sm">At 8+ nodes in one bucket (table of 64 or more) the chain becomes a red-black tree.</text>
+</svg>
+<figcaption>Simplified view: the key's hash picks a bucket; collisions form a chain inside that bucket.</figcaption>
+</figure>
+<div class="qa"><p class="q">How does put(k, v) work?</p>
+<ol>
+<li>Compute <code>h = key.hashCode() ^ (h &gt;&gt;&gt; 16)</code> to spread the high bits.</li>
+<li><mark>Index = (n - 1) and hash</mark>. The capacity n is always a power of two, which makes this faster than modulo.</li>
+<li>If the bucket is empty, create a node. Otherwise <mark>compare the hash first, then <code>==</code> / equals()</mark>. If the key matches, replace the value; if not, append to the chain (a collision).</li>
+<li><mark>A bucket with 8 or more nodes, in a table of at least 64, becomes a red-black tree</mark> (O(log n)). It turns back into a list at 6 or fewer.</li>
+<li>If size exceeds <mark>capacity × load factor (16 × 0.75 = 12)</mark>, the table <b>doubles</b> and nodes are redistributed.</li></ol></div>
+<div class="qa"><p class="q">How does get(k) work, and is a null key allowed?</p>
+<p>The lookup uses the same hash, goes to the same index, checks the first node, then walks the chain or tree using equals. <mark>A null key is allowed</mark> and always goes to bucket 0. The average cost is O(1), and the worst case is O(log n) since Java 8 (O(n) before).</p></div>
+<div class="qa"><p class="q">Is HashMap thread-safe?</p>
+<p><mark>No.</mark> Concurrent writes lose updates and cause visibility problems. Before Java 8 a concurrent resize could even loop forever. <code>ConcurrentHashMap</code> uses compare-and-set for empty buckets, locks only the bucket head for other writes, allows lock-free reads, and rejects null keys and values.</p></div>
+<p class="tip"><b>Trap:</b> mutating a key after insertion, or overriding equals without hashCode, makes the entry unreachable. Set an initial capacity of about <code>expected / 0.75 + 1</code> to avoid repeated resizes.</p>
+</section>
+
+<section class="topic">
+<h2>10. Java concurrency vs Kotlin coroutines</h2>
+<p class="asks">Often asked as: “Why coroutines over threads?”, “structured concurrency”, “cancellation”, “how is suspend compiled?”.</p>
+<div class="qa"><p class="q">What is the core difference?</p>
+<p>A thread is an <mark>OS resource, with a stack of roughly 1 MB and a costly context switch</mark>. Blocking a thread wastes it. A coroutine is a <mark>lightweight, suspendable computation</mark> that runs on a small thread pool. <code>suspend</code> frees the thread instead of blocking it, so you can run 100,000 coroutines, but not 100,000 threads.</p></div>
+<div class="qa"><p class="q">How is suspend implemented?</p>
+<p>The compiler performs a continuation-passing transformation. It adds a hidden <code>Continuation</code> parameter and turns the function into a <mark>state machine</mark>, where each suspension point is a numbered state and local variables live in the continuation object. Resuming means calling <code>continuation.resumeWith(result)</code>.</p></div>
+<div class="qa"><p class="q">What is structured concurrency?</p>
+<p>Coroutines live inside a <b>scope</b> with a parent-child <code>Job</code> tree. <mark>The parent waits for its children, cancelling the parent cancels all children, and a child failure cancels the parent</mark>, unless you use <code>SupervisorJob</code> or <code>supervisorScope</code>. Nothing is leaked, unlike a forgotten Thread or Executor task. Android provides <code>viewModelScope</code> and <code>lifecycleScope</code>, and you should avoid <code>GlobalScope</code>.</p></div>
+<div class="table-wrap"><table><tr><th>Need</th><th>Java</th><th>Kotlin</th></tr>
+<tr><td>Run work asynchronously</td><td>Executor, Future</td><td>launch, async</td></tr>
+<tr><td>Switch thread</td><td>Handler, runOnUiThread</td><td>withContext(Dispatchers.X)</td></tr>
+<tr><td>Mutual exclusion</td><td>synchronized, Lock</td><td>Mutex (suspends instead of blocking)</td></tr>
+<tr><td>Stream of values</td><td>Observable (RxJava)</td><td>Flow, StateFlow, SharedFlow, Channel</td></tr></table></div>
+<p class="tip"><b>Trap:</b> coroutines do not remove shared-state problems. You still need a Mutex, an atomic type or confinement. Virtual threads in Java 21 solve a similar scalability problem but lack structured cancellation and Flow. See Chapter {{ch:3}} for the details.</p>
+</section>

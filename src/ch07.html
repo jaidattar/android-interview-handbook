@@ -1,0 +1,196 @@
+<section class="topic framework">
+<h2>How to answer any design question</h2>
+<div class="qa"><ol>
+<li><b>Clarify requirements.</b> Functional: what must it do? Non-functional: offline use, latency, battery, minimum SDK, number of users and data volume? Constraints: team size, deadline, existing code.</li>
+<li><b>High-level design.</b> Layers, main components, and the data flow, such as UI, ViewModel, domain, repository, then local and remote sources.</li>
+<li><b>Deep-dive</b> into the one or two riskiest parts: sync, concurrency and failure handling.</li>
+<li><b>Trade-offs.</b> <mark>“Option A gives X but costs Y. Because our constraint is Z, I would choose A, and I would revisit if …”</mark></li>
+<li><b>Failure and evolution.</b> What breaks first, how you would monitor it, and how it grows.</li></ol></div>
+<figure class="diagram">
+<svg viewBox="0 0 680 250" role="img" aria-label="Layered Android architecture: UI, ViewModel, use cases, repositories, and data sources">
+<defs><marker id="arr-sd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--c)"/></marker></defs>
+<rect x="20" y="16" width="640" height="40" rx="10" class="bx2"/><text x="340" y="41" text-anchor="middle">UI: Compose screens, state in, events out</text>
+<rect x="20" y="72" width="640" height="40" rx="10" class="bx"/><text x="340" y="97" text-anchor="middle">ViewModel: UiState as StateFlow, one-off events, lifecycle-aware</text>
+<rect x="20" y="128" width="640" height="40" rx="10" class="bx"/><text x="340" y="153" text-anchor="middle">Domain (optional): use cases, business rules, pure Kotlin</text>
+<rect x="20" y="184" width="640" height="40" rx="10" class="bx2"/><text x="340" y="209" text-anchor="middle">Repositories: single source of truth, typed errors, main-safe</text>
+<rect x="20" y="222" width="0" height="0"/>
+<line x1="340" y1="56" x2="340" y2="69" class="arr" marker-end="url(#arr-sd)"/>
+<line x1="340" y1="112" x2="340" y2="125" class="arr" marker-end="url(#arr-sd)"/>
+<line x1="340" y1="168" x2="340" y2="181" class="arr" marker-end="url(#arr-sd)"/>
+</svg>
+<figcaption>A typical layered design. Dependencies point downward; state flows up and events flow down.</figcaption>
+</figure>
+<p class="tip"><b>Avoid:</b> naming a pattern before you know the requirement. “I would use Clean Architecture” is not an answer. <mark>Say “it depends on …”, and then say what it depends on.</mark> Tie your claims to real experience from your projects.</p>
+</section>
+
+<section class="topic">
+<h2>1. Design a scalable Android application</h2>
+<p class="asks">“Scalable” covers the codebase (team growth), performance (data and users) and features (changing safely).</p>
+<div class="qa"><p class="q">Design</p>
+<ul><li><b>Layers:</b> UI in Compose, then a ViewModel holding UI state, then an optional domain layer of use cases, then a data layer with repositories, Room and Retrofit. <mark>Unidirectional data flow, with one source of truth.</mark></li>
+<li><b>Modularisation</b> by feature when team size or build time demands it. Hilt for DI. Coroutines and Flow throughout.</li>
+<li><b>Offline-first</b> data, Paging for large lists, image caching, and background work through WorkManager.</li>
+<li><b>Engineering at scale:</b> CI with unit, UI and benchmark tests, feature flags, staged rollouts, crash, ANR and performance monitoring, and Baseline Profiles.</li></ul>
+<div class="table-wrap"><table><tr><th>Choice</th><th>Benefit</th><th>Cost</th></tr>
+<tr><td>Single module</td><td>Simple and fast to start</td><td>Slow builds and tangled code as it grows</td></tr>
+<tr><td>Many modules</td><td>Isolation, parallel builds, clear ownership</td><td>Configuration overhead, and discipline needed</td></tr>
+<tr><td>Extra layers (domain, mappers)</td><td>Testable, replaceable data sources</td><td>Boilerplate, which is wasteful in small apps</td></tr></table></div></div>
+<p class="tip"><b>Say:</b> “I would start with the simplest structure that supports the stated scale, with clear seams at the boundaries, so I can split things later without a rewrite.” <b>Pitfall:</b> premature over-engineering is as bad as a single giant Activity.</p>
+</section>
+
+<section class="topic">
+<h2>2. Structure a large Android codebase</h2>
+<div class="qa"><p class="q">Design</p>
+<pre><code>:app                           wiring, navigation host, DI root
+:feature:home, :feature:cart   UI and ViewModel per feature (no feature depends on a feature)
+:core:domain  :core:data  :core:network  :core:database
+:core:ui (design system)  :core:testing
+build-logic/                   convention plugins and version catalog</code></pre>
+<ul><li><mark><b>Enforce the dependency rules with tooling</b></mark>, such as module graph checks, lint rules, or architecture tests. Otherwise the rules decay.</li>
+<li>Expose a public <b>api</b> module and a hidden <b>impl</b> module for features that other features must call. Prefer <code>implementation</code> over <code>api</code> in Gradle.</li>
+<li>Ownership: CODEOWNERS per module, and a short decision record (ADR) for each area. Consistent conventions enforced by ktlint or detekt.</li>
+<li>Build speed: configuration cache, build cache, parallel execution, and non-transitive R classes.</li></ul>
+<div class="table-wrap"><table><tr><th>Split by</th><th>Pros</th><th>Cons</th></tr>
+<tr><td>Layer (ui, domain, data)</td><td>Familiar</td><td>Every feature touches every module; weak ownership</td></tr>
+<tr><td>Feature</td><td>Team ownership, independent change</td><td>Needs discipline in the shared core</td></tr>
+<tr><td>Monorepo vs multi-repo</td><td>Atomic changes (monorepo)</td><td>Tooling at scale (monorepo); version drift (multi-repo)</td></tr></table></div></div>
+<p class="tip"><b>Pitfalls:</b> a huge <code>:core:common</code> dumping ground, circular dependencies, and too many tiny modules. <b>Say:</b> “Feature-first, with layers inside each feature only when they earn their place.”</p>
+</section>
+
+<section class="topic">
+<h2>3. Handle offline data</h2>
+<div class="qa"><p class="q">Design</p>
+<p><mark>Room is the source of truth, and the UI observes it.</mark> For reads, show cached data immediately and refresh in the background. For writes, save locally first (optimistic), mark the row as pending, and sync later with <b>WorkManager</b>, which handles network constraints, backoff and unique work. Use idempotent writes through client-generated IDs.</p>
+<div class="table-wrap"><table><tr><th>Sync trigger</th><th>Good for</th><th>Cost</th></tr>
+<tr><td>Screen open or pull-to-refresh</td><td>Simple freshness</td><td>Stale between opens</td></tr>
+<tr><td>Periodic WorkManager job</td><td>Background freshness</td><td>Battery use, and still delayed</td></tr>
+<tr><td>Push (FCM), then sync</td><td>Near real-time</td><td>Backend support and complexity</td></tr></table></div>
+<div class="table-wrap"><table><tr><th>Conflict strategy</th><th>Use when</th><th>Risk</th></tr>
+<tr><td>Last write wins (timestamp or version)</td><td>Simple fields, single user</td><td>Silent data loss</td></tr>
+<tr><td>Server wins</td><td>The server is the authority (prices, stock)</td><td>User edits are discarded</td></tr>
+<tr><td>Field-level merge or CRDT</td><td>Collaborative editing</td><td>Complexity</td></tr>
+<tr><td>Ask the user</td><td>Rare, high-value conflicts</td><td>UX friction</td></tr></table></div></div>
+<p class="tip"><b>Decide per feature</b> what must work offline, because not everything needs to. <b>Pitfalls:</b> unbounded cache growth without an eviction policy, migrations that break users' data, sensitive data stored unencrypted, and no UI signal for pending or failed sync.</p>
+</section>
+
+<section class="topic">
+<h2>4. Design the repository layer</h2>
+<div class="qa"><p class="q">Design</p>
+<ul><li>The interface lives in <b>domain</b> and describes what the app needs. The implementation lives in <b>data</b> and describes how. It hides remote, local and cache sources, and the mapping between DTOs, entities and domain models.</li>
+<li><mark>Expose a <code>Flow</code> for data that changes over time, and <code>suspend</code> functions for one-shot actions.</mark> Keep them main-safe by injecting the dispatcher.</li>
+<li><b>Error model:</b> typed results or sealed errors, such as Network, Unauthorized, NotFound and Unknown. Raw exceptions should not leak into the UI.</li>
+<li>The cache policy is explicit and testable.</li></ul>
+<div class="table-wrap"><table><tr><th>Cache policy</th><th>Behaviour</th><th>Trade-off</th></tr>
+<tr><td>Cache first</td><td>Use local data if it exists</td><td>Fast, but may be stale</td></tr>
+<tr><td>Network first</td><td>Fetch, and fall back to the cache on failure</td><td>Fresh, but slow when the network is poor</td></tr>
+<tr><td>Stale while revalidate</td><td>Show the cache, refresh, then update the UI</td><td>Best experience, more logic</td></tr></table></div>
+<pre><code>interface FeedRepository {
+    fun observeFeed(): Flow&lt;List&lt;Post&gt;&gt;     // backed by Room
+    suspend fun refresh(): Outcome&lt;Unit&gt;     // network into Room; returns a typed error
+}</code></pre></div>
+<p class="tip"><b>Pitfalls:</b> a generic <code>Repository&lt;T&gt;</code> that fits nothing well, leaking Retrofit or Room types upward, one giant repository, and swallowing <code>CancellationException</code>. One repository per aggregate or feature is a good default.</p>
+</section>
+
+<section class="topic">
+<h2>5. Handle API failures and retries</h2>
+<div class="qa"><p class="q">Design</p>
+<ol><li><b>Classify errors:</b> transient (timeouts, connection resets, 502, 503, 429), permanent (400, 403, 404, parse errors), and authentication (401).</li>
+<li><mark>Retry only transient errors, with exponential backoff, jitter, a maximum number of attempts, and a cap.</mark> Respect <code>Retry-After</code> for 429.</li>
+<li><b>Retry only idempotent requests</b> such as GET, PUT and DELETE. For POST, use an <b>idempotency key</b>.</li>
+<li><b>On 401,</b> refresh the token once. Serialise refreshes with a Mutex, so concurrent calls do not all refresh at the same time, then replay the request. If the refresh fails, log the user out.</li>
+<li><b>UX:</b> show cached data with a banner, give a clear retry action, and never show an endless spinner. Queue user writes for WorkManager.</li>
+<li><b>Protect the backend:</b> jitter, a circuit breaker or fail-fast behaviour when a service is down, and timeouts everywhere.</li></ol>
+<pre><code>suspend fun &lt;T&gt; retry(times: Int = 3, baseDelay: Long = 500, block: suspend () -&gt; T): T {
+    var delayMs = baseDelay
+    repeat(times - 1) {
+        try {
+            return block()
+        } catch (e: IOException) {
+            delay(delayMs + Random.nextLong(0, delayMs / 2))  // backoff with jitter
+            delayMs *= 2
+        }
+    }
+    return block()   // the last attempt lets the error propagate
+}</code></pre>
+<div class="table-wrap"><table><tr><th>Choice</th><th>Trade-off</th></tr>
+<tr><td>Aggressive retries</td><td>Higher success rate, but battery drain, latency and retry storms</td></tr>
+<tr><td>Few or no retries</td><td>Predictable and gentle on the server, but more failures are visible</td></tr></table></div></div>
+<p class="tip"><b>Pitfalls:</b> blind retries of non-idempotent POST requests, which can create duplicate orders. Retrying 4xx errors. Every client retrying in lockstep. Logging request bodies that contain personal data.</p>
+</section>
+
+<section class="topic">
+<h2>6. Handle concurrency</h2>
+<div class="qa"><p class="q">Design</p>
+<ul><li><b>Structured concurrency:</b> work lives in <code>viewModelScope</code> or <code>lifecycleScope</code>. App-level work uses an injected application scope. Work that must be guaranteed to run uses WorkManager.</li>
+<li><mark>Prefer not to share mutable state.</mark> If you must share it, protect it: one owner with <code>StateFlow.update {}</code>, a single-thread dispatcher, a <code>Mutex</code>, atomic values, or Room transactions.</li>
+<li>Inject dispatchers. Make suspend functions main-safe. Use <code>flatMapLatest</code> or <code>debounce</code> to avoid stale and duplicate requests. Handle cancellation cooperatively.</li></ul>
+<div class="table-wrap"><table><tr><th>Tool</th><th>Use</th><th>Cost</th></tr>
+<tr><td>Mutex</td><td>Protect a critical section that spans suspension points</td><td>Contention; do not hold it across slow I/O</td></tr>
+<tr><td>Single-thread confinement</td><td>All access happens on one thread</td><td>Serial work, which can become a bottleneck</td></tr>
+<tr><td>Atomic or <code>update {}</code></td><td>Simple counters and small state</td><td>Only suitable for small state</td></tr>
+<tr><td>Channel or actor style</td><td>Serialise commands</td><td>More design complexity</td></tr></table></div></div>
+<p class="tip"><b>Races to name:</b> double-tapping a submit button, responses arriving out of order, a token-refresh stampede, read-modify-write on shared state, and the UI collecting after the screen has gone. <b>Say:</b> “I design so the races cannot happen, then add synchronisation only where sharing is unavoidable.”</p>
+</section>
+
+<section class="topic">
+<h2>7. Support different device configurations</h2>
+<div class="qa"><p class="q">Design</p>
+<ul><li><b>Dimensions to cover:</b> screen size, foldables, tablets and ChromeOS; orientation; density; font scale; locale and right-to-left layouts; dark mode; API level; RAM and CPU tier; and hardware features.</li>
+<li><mark>Adaptive layouts driven by <code>WindowSizeClass</code></mark>, such as list-detail on wide screens. Choose layouts by window size, not by device model. Do not lock orientation as a shortcut.</li>
+<li><b>State survives changes:</b> ViewModel, <code>rememberSaveable</code> and <code>SavedStateHandle</code>.</li>
+<li><b>Check capabilities rather than assume them:</b> <code>hasSystemFeature()</code> and <code>Build.VERSION.SDK_INT</code> guards behind small wrappers, with a graceful fallback.</li>
+<li><b>Test matrix:</b> emulators plus a few real low-end and foldable devices, Firebase Test Lab, screenshot tests for font scale, dark mode and right-to-left, and Vitals for real-device data.</li></ul>
+<div class="table-wrap"><table><tr><th>Decision</th><th>Trade-off</th></tr>
+<tr><td>Lower the minimum SDK</td><td>More users, but more compatibility code and testing</td></tr>
+<tr><td>Full adaptive UI</td><td>Better tablet and foldable experience, with extra design and QA cost</td></tr>
+<tr><td>Feature tiers for low-end devices</td><td>Smooth on weak hardware, but more variants to maintain</td></tr></table></div></div>
+<p class="tip"><b>Pitfalls:</b> hard-coded dp sizes and strings, an untested 200% font scale, assuming a camera, NFC or sensor exists, and state lost on rotation or when a foldable opens or closes.</p>
+</section>
+
+<section class="topic">
+<h2>8. Make an application testable</h2>
+<div class="qa"><p class="q">Design for it</p>
+<ul><li><mark>Constructor injection and interfaces at boundaries.</mark> No hidden singletons or static calls.</li>
+<li>Pure Kotlin domain logic with no Android classes. Inject <b>dispatchers and the clock</b>.</li>
+<li>Unidirectional state, with <code>UiState</code> going in and events coming out, so UI tests assert on state.</li></ul>
+<div class="table-wrap"><table><tr><th>Level</th><th>What is tested</th><th>Tools</th></tr>
+<tr><td>Unit (many)</td><td>Domain logic, ViewModels, mappers</td><td>JUnit, <code>runTest</code>, Turbine, fakes</td></tr>
+<tr><td>Integration</td><td>Repository with Room and a mock server</td><td>In-memory Room, MockWebServer</td></tr>
+<tr><td>UI</td><td>Composables and flows</td><td>Compose test rule, Espresso, Hilt test modules</td></tr>
+<tr><td>Screenshot and benchmark</td><td>Visual and performance regressions</td><td>Paparazzi or Roborazzi, Macrobenchmark</td></tr>
+<tr><td>End-to-end (few)</td><td>Critical user journeys</td><td>Firebase Test Lab</td></tr></table></div></div>
+<p class="tip"><b>Trade-offs:</b> <mark>fakes versus mocks.</mark> Fakes test behaviour and survive refactoring. Mocks verify interactions but break when code is refactored. Chasing a coverage percentage is less useful than testing risky logic. Flaky UI tests cost the team trust, so keep the pyramid bottom-heavy. <b>Pitfall:</b> tests coupled to implementation details.</p>
+</section>
+
+<section class="topic">
+<h2>9. Approach a major architecture migration</h2>
+<p class="asks">Examples: XML to Compose, RxJava to coroutines and Flow, MVP to MVVM, or a monolith to modules.</p>
+<div class="qa"><p class="q">Plan</p>
+<ol><li><b>Why, and how we will know:</b> set concrete goals and metrics, such as build time, crash rate or delivery speed. If it cannot be measured, question the migration.</li>
+<li><mark><b>Migrate incrementally, not with a big-bang rewrite (a strangler approach).</b></mark> New code uses the new style. Old code is migrated by value and risk, with interop adapters such as <code>ComposeView</code> or <code>asFlow()</code>.</li>
+<li><b>Guardrails</b> so the old pattern stops growing: lint or detekt rules, a review checklist and templates.</li>
+<li><b>Safety:</b> feature flags, staged rollouts, tests before behaviour changes, and a rollback plan.</li>
+<li><b>People:</b> an RFC or ADR, documentation, pairing, and an agreed timeline. Keep delivering features alongside the migration.</li>
+<li><b>Track and finish:</b> a migration dashboard showing the percentage migrated. Delete the old code. Do not leave two systems running forever.</li></ol>
+<div class="table-wrap"><table><tr><th>Approach</th><th>Pros</th><th>Cons</th></tr>
+<tr><td>Big-bang rewrite</td><td>A clean slate</td><td>Long freeze, high risk, regressions</td></tr>
+<tr><td>Incremental</td><td>Continuous value, low risk</td><td>Dual maintenance; needs discipline to finish</td></tr>
+<tr><td>Do not migrate</td><td>Zero risk</td><td>Growing tech debt, and hiring and tooling pain</td></tr></table></div></div>
+<p class="tip"><b>Pitfalls:</b> migrating because a pattern is fashionable, having no end date so the migration stays half-finished forever, and changing behaviour and architecture in the same pull request.</p>
+</section>
+
+<section class="topic">
+<h2>10. Make technical decisions when several solutions exist</h2>
+<div class="qa"><p class="q">A framework for deciding</p>
+<ol><li><b>Define the problem</b> and the decision <b>criteria</b>: user impact, complexity, time, team skills, maintainability, performance, risk, and the cost of reversing the decision.</li>
+<li><b>List two or three realistic options</b>, including “keep what we have”.</li>
+<li><b>Use evidence over opinion:</b> a small spike or prototype, a benchmark, and a check of library health (maintenance, community, Google support).</li>
+<li>Classify the decision. A <mark><b>two-way door</b></mark> is easy to reverse, so decide quickly. A <mark><b>one-way door</b></mark> is costly to reverse, so analyse it carefully and seek review.</li>
+<li><b>Write it down</b> in an ADR or RFC, invite feedback, decide, then commit, even if someone disagrees. Set a trigger for when to revisit.</li></ol>
+<div class="table-wrap"><table><tr><th>Example decision</th><th>Criteria that usually decide it</th></tr>
+<tr><td>Room vs SQLDelight</td><td>Team familiarity, Kotlin Multiplatform plans, query complexity</td></tr>
+<tr><td>Hilt vs Koin</td><td>Compile-time safety and scale, against simplicity</td></tr>
+<tr><td>Compose vs XML for a new screen</td><td>Team skills, existing UI, interop cost</td></tr>
+<tr><td>Build vs buy an SDK</td><td>Control, size and privacy cost, time to market</td></tr></table></div></div>
+<p class="tip"><b>Say:</b> “I optimise for the team's long-term velocity and the user's outcome, not for the technology I happen to like.” Have one real example ready where data changed your mind.</p>
+</section>

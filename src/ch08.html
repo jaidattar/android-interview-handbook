@@ -1,0 +1,135 @@
+<section class="topic framework">
+<h2>The honest-gap formula</h2>
+<div class="qa"><p class="q">Four parts, about 30 seconds</p>
+<ol><li><b>State the fact plainly,</b> with no apology and no exaggeration: what you have done and what you have not.</li>
+<li><b>Show adjacent experience</b> that is true.</li>
+<li><b>Show that you understand the topic:</b> the concepts, and how you would approach it.</li>
+<li><b>Show what you are doing about it,</b> with a concrete and recent action.</li></ol>
+<p class="say"><mark>“I haven't shipped X to production. I've done Y, which is related. My understanding is …, and here is how I would approach it. I'm currently …”</mark></p></div>
+<div class="table-wrap"><table><tr><th>Do</th><th>Don't</th></tr>
+<tr><td>Be precise about your role: “I contributed to”, “I led”, “I attended”</td><td>Claim ownership of work you only observed</td></tr>
+<tr><td>Keep numbers consistent, such as years of experience, across your CV, profile and conversation</td><td>Round up, or contradict yourself. Interviewers cross-check.</td></tr>
+<tr><td>Say “I don't know, but here is how I would find out”</td><td>Bluff. One probing follow-up exposes it and costs trust everywhere else.</td></tr>
+<tr><td>Move on to your strengths after answering</td><td>Over-apologise or dwell on the gap</td></tr></table></div>
+<p class="tip"><b>Why it works:</b> senior interviewers expect gaps. They are testing judgement, honesty and how fast you learn. “I haven't done that, but here is how I would approach it” scores better than a bluff that gets caught.</p>
+</section>
+
+<section class="topic">
+<h2>1. Data structures and algorithms</h2>
+<p class="asks">Typical gap: a moderate problem-solving level. Prepare by practising the patterns in Chapter {{ch:6}} and explaining complexity out loud.</p>
+<div class="qa"><p class="q">If asked about your level</p>
+<p class="say">“Algorithms aren't my daily work. Android architecture and performance are. I've been practising patterns deliberately: hash maps, two pointers, sliding windows, trees and dynamic programming. I can reason about trade-offs and complexity, and I talk through my approach as I go.”</p></div>
+<div class="qa"><p class="q">How do you perform well in the round?</p>
+<ul><li>Clarify, then give an example, then state the <mark>brute force with its complexity</mark>, then optimise, code, test, and state the complexity again.</li>
+<li><b>Think aloud.</b> Interviewers score your reasoning, and a hint is part of the conversation. Accept a hint gracefully and build on it.</li>
+<li><b>If you are stuck:</b> restate the problem, try a tiny example by hand, ask whether sorting or a hash map would simplify it, and deliver a working brute force rather than nothing.</li>
+<li>Name the pattern you see, such as “this looks like a sliding window, because we want the longest contiguous range”.</li>
+<li>Never claim a solution is optimal without justifying its complexity.</li></ul></div>
+<p class="tip"><b>Honesty point about experience:</b> state your years of experience <em>consistently</em> everywhere. If asked, give the real figure and describe what you have done, not an estimate that changes between answers.</p>
+</section>
+
+<section class="topic">
+<h2>2. Accessibility (deep dive)</h2>
+<p class="asks">Typical gap: no production accessibility work. Prepare with TalkBack, semantics, content descriptions and focus order.</p>
+<div class="qa"><p class="q">Honest answer if asked “What accessibility work have you done?”</p>
+<p class="say">“I haven't owned an accessibility initiative in production. I know the model well. TalkBack reads the semantics tree, so I make sure every actionable element has a meaningful label, role and state, a logical focus order, 48 dp touch targets, sufficient contrast, and support for large font sizes. I verify that with TalkBack and Accessibility Scanner. Here is what I have done in practice: [name one true example, such as a content description you added or a screen you tested at large font sizes]. I'm now doing an accessibility pass on a sample app to build hands-on experience.”</p></div>
+<div class="qa"><p class="q">Core concepts to know cold</p>
+<ul><li><b>TalkBack</b> is Android's screen reader. You explore by touch: <mark>swipe right or left to move to the next or previous item, and double-tap to activate</mark>. Other services include Switch Access, Voice Access and BrailleBack, plus display settings such as font size and colour correction.</li>
+<li>Accessibility services do not see pixels. They read the <b>accessibility node tree</b> for Views and the <b>semantics tree</b> for Compose, which carry the label, role, state and actions.</li>
+<li><b>Principles (WCAG-style):</b> perceivable, operable, understandable, robust. Body text contrast should be at least <mark>4.5:1</mark>, or 3:1 for large text and UI components. Touch targets should be at least <mark>48 × 48 dp</mark>. Do not rely on colour alone. Support 200% font scale by using <code>sp</code>. Avoid time limits without a way to extend them.</li></ul></div>
+<div class="qa"><p class="q">Content descriptions</p>
+<ul><li>Label every <b>meaningful</b> non-text element, such as icon buttons and informative images. <mark>Mark decorative elements as ignored</mark>, using <code>contentDescription = null</code> in Compose or <code>importantForAccessibility="no"</code> in XML.</li>
+<li>Describe the <em>purpose</em>, not the picture. Write “Delete order”, not “trash icon”. Do not add the word “button”, because TalkBack announces the role. Localise labels through string resources.</li>
+<li>Prefer visible text as the label, since Compose merges it automatically. Text fields need a label or hint that stays available while typing.</li></ul>
+<pre><code>Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.cd_delete_order))
+Image(painter, contentDescription = null)                  // decorative: skipped by TalkBack
+&lt;ImageButton android:contentDescription="@string/cd_share" android:minWidth="48dp" android:minHeight="48dp" /&gt;</code></pre></div>
+<div class="qa"><p class="q">Semantics in Compose</p>
+<ul><li><code>Modifier.semantics { }</code> edits the semantics node. <code>mergeDescendants = true</code> groups children into <b>one</b> focusable item, so a row with an icon, a title and a subtitle reads as one sentence. <code>clickable</code> and <code>toggleable</code> merge automatically. <code>clearAndSetSemantics</code> replaces everything.</li>
+<li>Expose the <b>role, state and actions</b>: <code>role = Role.Button</code>, <code>stateDescription</code>, <code>onClick(label = "…")</code>, <code>customActions</code> to replace hidden swipe gestures, <code>heading()</code> for section titles so TalkBack can jump between headings, and <code>liveRegion</code> for dynamic updates.</li></ul>
+<pre><code>Text("Orders", Modifier.semantics { heading() })
+Switch(checked, onCheckedChange, Modifier.semantics {
+    stateDescription = if (checked) "On" else "Off"
+})
+Row(Modifier.clickable(onClickLabel = "Open order", onClick = onOpen)) { Thumb(); Title(); Price() }
+Box(Modifier.semantics { liveRegion = LiveRegionMode.Polite }) { Text(statusText) }</code></pre></div>
+<div class="qa"><p class="q">Focus and navigation order</p>
+<ul><li>The default traversal follows layout order: start to end, top to bottom. <mark>Fix the order through structure first</mark>, then use overrides: <code>isTraversalGroup</code> and <code>traversalIndex</code>, or <code>focusProperties { next = … }</code> in Compose. In XML, use <code>accessibilityTraversalBefore</code> and <code>accessibilityTraversalAfter</code>, or <code>nextFocusDown</code>.</li>
+<li>Keyboard, D-pad and Switch Access need every control to be focusable and operable without touch gestures, with a visible focus indicator. For custom views, use <code>AccessibilityDelegateCompat</code> to set the role and actions.</li>
+<li><b>Moving focus on change:</b> after opening a dialog or screen, or on an error, move focus to the title or the first error with a <code>FocusRequester</code>. Use live regions for status messages, and make dialogs trap focus.</li>
+<li>Do not build custom gestures such as swipe, long-press or drag without an accessible alternative action.</li></ul></div>
+<div class="qa"><p class="q">How do you test it?</p>
+<ul><li><b>Manually:</b> turn on TalkBack and complete the key journeys with the screen off. Try 200% font and display size, Switch Access, and a keyboard.</li>
+<li><b>Accessibility Scanner</b>, plus the Layout Inspector accessibility checks: touch target size, contrast and missing labels.</li>
+<li><b>Automated:</b> Espresso <code>AccessibilityChecks.enable()</code>, Compose accessibility checks in UI tests, semantics assertions such as <code>onNodeWithContentDescription</code> and <code>assertHasClickAction</code>, the lint <code>ContentDescription</code> rule, and screenshot tests at large font scale.</li>
+<li><b>Process:</b> include accessibility in design reviews and in the definition of done. Automated checks catch the mechanical problems, <mark>but not whether the experience makes sense.</mark></li></ul></div>
+<p class="tip"><b>Typical follow-ups:</b> “How would you make a custom chart accessible?” (a text summary with semantics, or an alternative data table). “A list row has an image, a title, a subtitle and a delete button?” (merge the row, and keep delete as its own action or a custom action). “How do you announce a snackbar?” (a live region, or the built-in announcements). <b>Trap:</b> labelling everything blindly creates noisy output. Less, clearer and logically ordered is better.</p>
+</section>
+
+<section class="topic">
+<h2>3. Formal design reviews</h2>
+<p class="asks">Typical gap: architecture discussions are routine, but formal review ownership is not confirmed. If you have a genuine example, prepare it.</p>
+<div class="qa"><p class="q">If asked “Tell me about a design review you led or took part in”</p>
+<p class="say">“Most of my design discussions happened [in pull requests, in team sessions, or informally]. Here is a real one: …” <mark>Describe your actual role precisely.</mark> If you have never run a formal review, say so, give the closest real example, and explain how you would run one.</p>
+<p><b>Structure a genuine example (STAR):</b> <b>Situation</b> (what needed designing), <b>Options</b> that you or the team considered, <b>Your contribution</b> (a question you raised, an alternative you proposed, a risk you found), <b>Outcome</b> (the decision and what changed), and <b>Lesson</b>.</p></div>
+<div class="qa"><p class="q">What does a formal review look like?</p>
+<ul><li><b>Artifact:</b> a design doc, RFC or ADR with context, goals and <b>non-goals</b>, options considered, the proposal, trade-offs, risks, rollout and rollback, metrics and open questions.</li>
+<li><b>Process:</b> the author circulates the document in advance, comments are gathered asynchronously, contested points go to a review meeting, the decision is recorded, and a revisit trigger is set.</li></ul>
+<p><b>Questions a good reviewer asks:</b></p>
+<ul><li>What problem does this solve, and what happens if we do nothing?</li>
+<li>What are the failure modes, such as offline use, partial failure, retries and data loss? How do we roll back?</li>
+<li>How does it scale in data, users and team size, and what does it cost in build time, app size and battery?</li>
+<li>How is it tested, observed in production, and how do security and privacy apply?</li>
+<li>What is the migration path, and who owns it after launch?</li></ul>
+<p><b>Receiving feedback:</b> separate the design from yourself, ask for the concern behind each comment, and record decisions and their reasons.</p></div>
+<div class="qa"><p class="q">How do you build real evidence now?</p>
+<ul><li>Write a short ADR, such as <code>docs/adr/0001-use-room.md</code>, for a real decision in one of your projects. It becomes a concrete talking point.</li>
+<li>Review pull requests with a design lens: boundaries, naming and testability. Write down what you would flag.</li>
+<li>Ask a colleague to review one of your design documents, then describe how their feedback changed it.</li></ul></div>
+<p class="tip"><b>Trap:</b> inventing a formal review story, or describing someone else's work as your own. If you cannot name a concrete decision and its trade-offs, the story is not ready.</p>
+</section>
+
+<section class="topic">
+<h2>4. Advanced system design</h2>
+<p class="asks">Typical gap: architecture experience is solid, but unfamiliar large-scale systems may not be. Prepare trade-offs, scalability and component boundaries, building on Chapter {{ch:7}}.</p>
+<div class="qa"><p class="q">Component boundaries: the senior lens</p>
+<ul><li><mark>A good boundary has one reason to change, a small public API, and hides its data and technology choices.</mark> Depend on abstractions across the boundary.</li>
+<li><b>Data ownership:</b> each module owns its tables and state. Other modules go through its API. No shared mutable globals.</li>
+<li><b>Communication:</b> direct calls for tight cohesion, events or flows for decoupling, and navigation contracts between features.</li>
+<li><b>Smells:</b> a change in A always requires a change in B, circular dependencies, a “common” or “utils” module that everything imports, and DTOs or database entities leaking across layers.</li></ul>
+<div class="table-wrap"><table><tr><th>Scalability axis</th><th>Questions to ask</th></tr>
+<tr><td>Data volume</td><td>Paging, indexes, eviction and memory limits</td></tr>
+<tr><td>Concurrency</td><td>Races, ordering, cancellation and a single writer</td></tr>
+<tr><td>Team and code</td><td>Modules, ownership, build time and conventions</td></tr>
+<tr><td>Release velocity</td><td>Feature flags, staged rollouts and backward compatibility</td></tr>
+<tr><td>Device and network diversity</td><td>Low-end RAM, slow or flaky networks, battery</td></tr>
+<tr><td>Backend load</td><td>Request batching, caching, backoff with jitter, push vs poll</td></tr></table></div></div>
+<div class="qa"><p class="q">Worked example: an offline-first chat client</p>
+<ul><li><b>Requirements to clarify:</b> one-to-one or group chats? Media? Read receipts? History size? Multiple devices? Latency target?</li>
+<li><b>Boundaries:</b> <code>:feature:chat</code> for the UI and ViewModel, then <code>:core:chat-data</code> for the repository and sync, then <code>:core:database</code> (Room) and <code>:core:network</code> (REST and WebSocket). Notifications arrive through FCM.</li>
+<li><b>Data flow:</b> the UI observes Room, and <mark>the local database is the source of truth.</mark> Sending inserts the message locally with a <b>client-generated ID</b> and state <code>SENDING</code>. A sync worker or WebSocket sends it, and it becomes <code>SENT</code>, then <code>DELIVERED</code> or <code>READ</code>. On failure it becomes <code>FAILED</code> and can be retried.</li>
+<li><b>Ordering and deduplication:</b> the server assigns a sequence number per conversation. The client ID makes retries idempotent. After a reconnect, fetch everything since the last sequence number to fill gaps.</li>
+<li><b>Transport:</b> WebSocket while the app is in the foreground, for low latency. FCM wakes the app in the background to sync. REST with a Paging 3 <code>RemoteMediator</code> loads history.</li>
+<li><b>Media:</b> uploads run through WorkManager, which is resumable and respects constraints. Show thumbnails first, and cache with size limits.</li>
+<li><b>Failure modes:</b> reconnects with backoff and jitter, duplicate delivery, out-of-order arrival, the app being killed mid-send (the outbox survives in Room), and clock skew.</li></ul>
+<div class="table-wrap"><table><tr><th>Transport</th><th>Pros</th><th>Cons</th></tr>
+<tr><td>WebSocket</td><td>Real-time and bidirectional</td><td>Battery use, reconnect logic, killed in the background</td></tr>
+<tr><td>FCM push</td><td>Works when the app is not running</td><td>Not guaranteed to be instant; payload limits; a fetch is still needed</td></tr>
+<tr><td>Polling</td><td>Simple</td><td>A trade-off between latency and battery or backend load</td></tr></table></div></div>
+<div class="qa"><p class="q">Practice prompts (45 minutes each, out loud)</p>
+<ul><li>An image feed with infinite scroll and an offline cache · A photo or video uploader that can resume · Offline maps and downloads</li>
+<li>A notification system with channels, grouping and delivery · A video player with prefetching · A checkout or payments flow with idempotency and security</li>
+<li>A reusable Android SDK with a public API, binary compatibility and size limits · Real-time collaborative editing with conflict resolution</li></ul>
+<p><b>Drill:</b> 5 minutes on requirements, 10 on the high-level design, 20 on the deep dive into sync, concurrency and failures, and 10 on trade-offs and evolution. Record yourself and listen for “it depends” without the “on what”.</p></div>
+<p class="tip"><b>Trap:</b> naming technologies instead of reasoning. Always finish with: what breaks first at 10 times the scale, how I would detect it, and what I would change.</p>
+</section>
+
+<section class="topic">
+<h2>Quick reference: honest opening lines</h2>
+<div class="qa"><div class="table-wrap"><table><tr><th>Question</th><th>Honest opening line</th></tr>
+<tr><td>“What is your algorithms level?”</td><td>“It's not my daily focus, but I practise patterns deliberately and I reason about complexity out loud.”</td></tr>
+<tr><td>“What is your accessibility experience?”</td><td>“I haven't owned it in production. I understand the model (semantics, labels, focus and testing), and here is how I would apply it.”</td></tr>
+<tr><td>“Have you run formal design reviews?”</td><td>“My design discussions were mostly [your real format]. Here is one real example and my exact role.”</td></tr>
+<tr><td>“How is your advanced system design?”</td><td>“I have designed [real systems]. With a new one I start by clarifying requirements, drawing boundaries and naming trade-offs.”</td></tr></table></div></div>
+<p class="tip"><b>Final rule:</b> everything you say must survive three follow-up questions. If it would not, trim it down to what does.</p>
+</section>

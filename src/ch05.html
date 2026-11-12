@@ -1,0 +1,179 @@
+<section class="topic framework">
+<h2>The universal frame: use it for every question</h2>
+<p class="asks">Interviewers test how you think, not definitions. Every answer below follows the same seven steps, so practise saying them out loud.</p>
+<figure class="diagram">
+<svg viewBox="0 0 680 210" role="img" aria-label="Seven steps: reproduce, collect, locate, isolate, fix, test, monitor, in a loop">
+<defs><marker id="arr-7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--c)"/></marker></defs>
+<rect x="10" y="20" width="118" height="52" rx="12" class="bx"/><text x="69" y="44" text-anchor="middle">1 Reproduce</text><text x="69" y="62" text-anchor="middle" class="sm">exact steps</text>
+<rect x="150" y="20" width="118" height="52" rx="12" class="bx"/><text x="209" y="44" text-anchor="middle">2 Collect</text><text x="209" y="62" text-anchor="middle" class="sm">evidence</text>
+<rect x="290" y="20" width="118" height="52" rx="12" class="bx"/><text x="349" y="44" text-anchor="middle">3 Locate</text><text x="349" y="62" text-anchor="middle" class="sm">which layer</text>
+<rect x="430" y="20" width="118" height="52" rx="12" class="bx"/><text x="489" y="44" text-anchor="middle">4 Isolate</text><text x="489" y="62" text-anchor="middle" class="sm">root cause</text>
+<rect x="150" y="120" width="118" height="52" rx="12" class="bx"/><text x="209" y="144" text-anchor="middle">5 Fix</text><text x="209" y="162" text-anchor="middle" class="sm">smallest safe change</text>
+<rect x="290" y="120" width="118" height="52" rx="12" class="bx"/><text x="349" y="144" text-anchor="middle">6 Test</text><text x="349" y="162" text-anchor="middle" class="sm">guard regressions</text>
+<rect x="430" y="120" width="118" height="52" rx="12" class="bx"/><text x="489" y="144" text-anchor="middle">7 Monitor</text><text x="489" y="162" text-anchor="middle" class="sm">confirm in prod</text>
+<line x1="128" y1="46" x2="147" y2="46" class="arr" marker-end="url(#arr-7)"/>
+<line x1="268" y1="46" x2="287" y2="46" class="arr" marker-end="url(#arr-7)"/>
+<line x1="408" y1="46" x2="427" y2="46" class="arr" marker-end="url(#arr-7)"/>
+<path d="M489,74 L489,100 L209,100 L209,117" class="arr" marker-end="url(#arr-7)"/>
+<line x1="268" y1="146" x2="287" y2="146" class="arr" marker-end="url(#arr-7)"/>
+<line x1="408" y1="146" x2="427" y2="146" class="arr" marker-end="url(#arr-7)"/>
+<text x="20" y="200" class="sm">If the fix does not hold in production, go back to step 1 with new evidence.</text>
+</svg>
+<figcaption>The frame. Data before guesses, and every fix should come with a guard against the same bug coming back.</figcaption>
+</figure>
+<div class="qa"><p class="q">The seven steps</p>
+<ol>
+<li><b>Reproduce.</b> Get the exact steps, device, OS version, build, network and data state. <mark>If you cannot reproduce it, use production data (Vitals, Crashlytics) to find the pattern</mark>, such as which devices or versions are affected.</li>
+<li><b>Collect evidence.</b> Logs, stack traces, Perfetto traces, heap dumps, metrics and request IDs. <mark>Data before guesses.</mark></li>
+<li><b>Locate the layer.</b> Is it the app, the device or hardware, the network, or a backend service? Rule layers out quickly: does it fail on other devices, on other networks, or when the API is called directly with curl?</li>
+<li><b>Isolate the root cause.</b> Form a hypothesis, change one variable at a time, and bisect by commit or feature flag until you can explain <em>why</em>, not just where.</li>
+<li><b>Fix.</b> The smallest safe change that addresses the cause, not the symptom.</li>
+<li><b>Test and guard.</b> Unit or instrumented tests, a benchmark, StrictMode or LeakCanary in debug builds, and a staged rollout.</li>
+<li><b>Monitor.</b> Watch the metric that proved the problem, and confirm it moved in production.</li>
+</ol></div>
+<p class="say"><mark>How to sound senior:</mark> think aloud. Ask clarifying questions first, such as “Does it happen on all devices? Since which release?” Prioritise by user impact, such as crash-free rate or the share of affected users. Mention a trade-off, and close with “I would add a guard so it cannot silently come back.”</p>
+<div class="table-wrap"><table><tr><th>Symptom</th><th>First tools</th></tr>
+<tr><td>ANR</td><td>Play Vitals, ANR traces, Perfetto, StrictMode</td></tr>
+<tr><td>Leak or OOM</td><td>LeakCanary, Memory Profiler heap dump, <code>dumpsys meminfo</code></td></tr>
+<tr><td>Crash</td><td>Crashlytics or Vitals, deobfuscated stack trace, logcat</td></tr>
+<tr><td>Slow start</td><td>Macrobenchmark, System Trace, the “Displayed” log line, <code>am start -W</code></td></tr>
+<tr><td>Jank</td><td>JankStats, Perfetto frame timeline, Layout Inspector</td></tr>
+<tr><td>Network</td><td>Network Inspector, Charles or mitmproxy, OkHttp EventListener</td></tr></table></div>
+</section>
+
+<section class="topic">
+<h2>1. Investigating an ANR</h2>
+<p class="asks">Often asked as: “Users report the app freezes. Walk me through it.”</p>
+<div class="qa"><p class="q">What is an ANR?</p>
+<p>The main thread fails to respond in time. The triggers are an input event not handled within about <mark>5 seconds</mark>, a broadcast receiver running too long (about 10 seconds in the foreground, 60 in the background), or a service that does not start in time. Play Vitals tracks the ANR rate that users actually experience.</p></div>
+<div class="qa"><p class="q">How do the seven steps apply?</p>
+<ol>
+<li><b>Reproduce:</b> which screen and action, which device class, cold or warm start. Try with throttled CPU, large data sets and airplane mode.</li>
+<li><b>Collect:</b> the ANR clusters in the Play Console or Crashlytics, with <mark>main-thread stack traces</mark>. Also <code>adb bugreport</code> or the traces in <code>/data/anr</code>. From API 30, <code>ApplicationExitInfo</code> with <code>REASON_ANR</code> lets you log ANRs yourself.</li>
+<li><b>Locate the layer:</b> read the <b>main thread state</b>. <code>Blocked</code> means a lock is held by another thread. <code>Native</code> or binder means a slow system service or IPC. <code>Runnable</code> means CPU-heavy work. <code>Waiting</code> can mean SharedPreferences or <code>QueuedWork</code>. Check overall CPU load too.</li>
+<li><b>Root cause:</b> find who owns the lock, which call is running on main, and the long slices in the Perfetto timeline.</li>
+<li><b>Fix:</b> move disk, network and database work off main with coroutines and <code>Dispatchers.IO</code>. Use <code>goAsync()</code> or WorkManager in receivers, split large work, remove lock contention, and replace blocking binder calls.</li>
+<li><b>Test:</b> enable <b>StrictMode</b> (detect disk reads, writes and network) in debug builds, and measure the flow with a macrobenchmark.</li>
+<li><b>Monitor:</b> the ANR rate per version and device in Vitals, after a staged rollout.</li>
+</ol></div>
+<div class="qa"><p class="q">What are the typical root causes?</p>
+<ul><li>Disk, database or network work on the main thread, huge JSON parsing, or <code>SharedPreferences.commit()</code> blocking in <code>onStop</code>.</li>
+<li><mark>Lock contention or deadlock</mark> between the main thread and a background thread, or <code>runBlocking</code> on main.</li>
+<li>Heavy work in <code>BroadcastReceiver.onReceive</code>, <code>Application.onCreate</code> or a ContentProvider's initialisation.</li>
+<li>A slow binder call to a system service, or a foreground service that does not call <code>startForeground()</code> in time.</li></ul></div>
+<p class="tip"><b>Trap:</b> the stack in an ANR report is the main thread <em>at the moment the system noticed</em>, which is not always the cause. It may be waiting for a lock held elsewhere, so look at all threads. Low-end devices under memory pressure also cause ANRs even with correct code.</p>
+</section>
+
+<section class="topic">
+<h2>2. Identifying memory leaks</h2>
+<p class="asks">Often asked as: “Memory keeps growing, or we get OOM crashes. What do you do?”</p>
+<div class="qa"><p class="q">How do the seven steps apply?</p>
+<ol>
+<li><b>Reproduce:</b> repeat a flow, such as opening and closing a screen or rotating, 10 to 20 times while watching memory. <code>adb shell dumpsys meminfo &lt;package&gt;</code> shows Activity and View counts.</li>
+<li><b>Collect:</b> <mark><b>LeakCanary</b> in debug builds</mark> reports the reference chain automatically. The Android Studio <b>Memory Profiler</b> can force a GC, capture a heap dump, and filter by the Activity or Fragment class to find instances that should already be gone.</li>
+<li><b>Locate the layer:</b> Java heap, native memory or graphics (bitmaps). Is it a <b>leak</b>, where objects are retained forever, or <b>bloat</b>, where too much is legitimately alive, such as huge bitmaps?</li>
+<li><b>Root cause:</b> read the <mark>path from a GC root</mark> to the leaked object, and find who holds the reference.</li>
+<li><b>Fix:</b> break the reference by unregistering, cancelling, clearing it, using the application context, or a lifecycle-bound scope.</li>
+<li><b>Test:</b> LeakCanary assertions in instrumented tests, then repeat the flow and compare heap dumps.</li>
+<li><b>Monitor:</b> the OOM rate and “excessive memory” in Vitals or Crashlytics, and memory metrics per release.</li>
+</ol></div>
+<div class="qa"><p class="q">What are the classic leak sources?</p>
+<ul><li><b>A static or singleton holding a Context, View or Activity.</b> Use <code>applicationContext</code>.</li>
+<li>Listeners, callbacks or receivers <mark>never unregistered</mark>. A Handler with delayed messages. Anonymous or inner classes that capture <code>this</code>.</li>
+<li>Coroutines in <code>GlobalScope</code>, or in a scope that outlives the screen. Unclosed Rx subscriptions, and flows collected without a lifecycle.</li>
+<li><mark><b>A Fragment's view binding not cleared in <code>onDestroyView</code></b></mark>. Adapters or RecyclerViews holding views, WebViews, and large bitmaps that are not sized or recycled.</li></ul></div>
+<p class="tip"><b>Trap:</b> “the GC did not free it” is not always a leak. Caches such as <code>LruCache</code> and bitmaps are retained by design. Compare heap dumps <em>after forcing a GC</em>. Mention that you also drop caches in response to <code>onTrimMemory</code>.</p>
+</section>
+
+<section class="topic">
+<h2>3. Analysing crashes</h2>
+<p class="asks">Often asked as: “The crash rate jumped after the release. What do you do?”</p>
+<div class="qa"><p class="q">How do the seven steps apply?</p>
+<ol>
+<li><b>Triage first:</b> how many users, which versions, devices and OS releases, and since when? <mark>High impact and new in this release means you consider halting the rollout or turning off a feature flag</mark>, before deep investigation.</li>
+<li><b>Collect:</b> the Crashlytics or Vitals stack trace, <b>deobfuscated with the R8 mapping file</b>, plus breadcrumbs, custom keys such as the current screen, and logcat for a local reproduction. For native crashes, use the tombstone and <code>ndk-stack</code> with symbols.</li>
+<li><b>Locate the layer:</b> your app, OS or OEM behaviour, a third-party SDK, bad server data, or resource exhaustion such as OOM?</li>
+<li><b>Root cause:</b> read the <code>Caused by:</code> chain from the bottom up to the first line in your own package. Find the input that triggers it, and bisect against recent commits.</li>
+<li><b>Fix the cause</b>, not a blanket <code>try/catch</code>.</li>
+<li><b>Test:</b> write a failing unit or instrumented test first, make it pass, then roll out in stages.</li>
+<li><b>Monitor:</b> crash-free users and sessions for the new version, with an alert on regressions.</li>
+</ol></div>
+<div class="qa"><p class="q">Which crash types are common on Android?</p>
+<ul><li><code>NullPointerException</code> from Java or platform types, or from JSON. <code>IllegalStateException: Can not perform this action after onSaveInstanceState</code> from fragment transaction timing.</li>
+<li><code>OutOfMemoryError</code>, <code>TransactionTooLargeException</code> (too much data in a Bundle or Intent), and <code>NetworkOnMainThreadException</code>.</li>
+<li>Process-death restore where <code>lateinit</code> or static state is gone. <code>ClassCastException</code> or <code>NoSuchMethodError</code> from R8 shrinking or library mismatches. Permission and foreground-service restrictions on newer OS versions.</li></ul></div>
+<p class="tip"><b>Trap:</b> an obfuscated trace is useless without the uploaded mapping file. Crashes concentrated on one OEM or OS version usually mean a platform behaviour change, not your logic. Check the release notes and the behaviour changes that come with your target SDK.</p>
+</section>
+
+<section class="topic">
+<h2>4. Slow application startup</h2>
+<p class="asks">Often asked as: “Cold start takes six seconds on a mid-range phone. What do you do?”</p>
+<div class="qa"><p class="q">How do the seven steps apply?</p>
+<ol>
+<li><b>Reproduce and baseline:</b> define cold, warm and hot starts, and measure on a low or mid-range device with a release build. The key metrics are <b>TTID</b>, time to the first frame (the “Displayed” logcat line, or <code>adb shell am start -W</code>), and <b>TTFD</b>, time to full drawing (call <code>reportFullyDrawn()</code>).</li>
+<li><b>Collect:</b> a <b>Macrobenchmark</b> with <code>StartupTimingMetric</code> for repeatable numbers, a <b>System Trace</b> in Perfetto or Android Studio, and the Play Vitals startup times. A cold start of 5 seconds or more is flagged as bad.</li>
+<li><b>Locate the layer:</b> process creation, then <code>Application.onCreate</code>, ContentProviders and SDK initialisation, then the first Activity's <code>onCreate</code>, the first frame, and data loading. Which slice is the longest?</li>
+<li><b>Root cause:</b> in the trace, look for long main-thread slices: SDK initialisation, dependency graph construction, disk reads, layout inflation, and class loading.</li>
+<li><b>Fix:</b> defer or lazily initialise non-critical SDKs. Use the App Startup library instead of many ContentProviders, and lazy injection such as <code>Lazy</code> or <code>Provider</code>. Move work off main, and show cached content first. Add <mark><b>Baseline Profiles</b></mark> with <code>ProfileInstaller</code>, enable R8, simplify the first screen's layout, and use the Splash Screen API.</li>
+<li><b>Test:</b> rerun the macrobenchmark, compare the <b>median and P90</b>, and add it to CI to catch regressions.</li>
+<li><b>Monitor:</b> startup time percentiles per version and device class in Vitals or Firebase Performance.</li>
+</ol></div>
+<p class="tip"><b>Trap:</b> measuring a debug build or a flagship device hides the problem. The first run is slow because of JIT warm-up, so choose the <code>CompilationMode</code> in benchmarks deliberately. Moving work to a background thread does not help if the first screen still waits for its result.</p>
+</section>
+
+<section class="topic">
+<h2>5. Diagnosing UI rendering issues</h2>
+<p class="asks">Often asked as: “The list scrolls janky”, or “animations drop frames”.</p>
+<div class="qa"><p class="q">How do the seven steps apply?</p>
+<ol>
+<li><b>Reproduce:</b> which screen and gesture, the device's refresh rate (60 Hz gives <mark>16.6 ms per frame</mark>, 120 Hz gives 8.3 ms), a low-end device, and a release build.</li>
+<li><b>Collect:</b> the <b>Perfetto frame timeline</b> or Android Studio's system trace, <b>JankStats</b>, the <b>Macrobenchmark FrameTimingMetric</b>, the Profile GPU Rendering bars, and the slow and frozen frame counts in Vitals. A slow frame takes over 16 ms, and a frozen frame takes over 700 ms.</li>
+<li><b>Locate the layer:</b> which phase used the budget: the <b>main thread</b> (input, composition, layout or measurement), the <b>RenderThread or GPU</b> (drawing, overdraw, large bitmaps), or <b>garbage collection pauses</b>?</li>
+<li><b>Root cause:</b> long <code>Choreographer#doFrame</code> slices, deep view hierarchies in Layout Inspector, and for Compose, <b>recomposition counts</b> and the compiler stability reports.</li>
+<li><b>Fix:</b> remove work from the frame by moving it to the background or precomputing it. Flatten layouts or use <code>ConstraintLayout</code>. Use <code>DiffUtil</code> or <code>ListAdapter</code> instead of <code>notifyDataSetChanged</code>. Use stable keys and immutable items in lazy lists, right-sized cached images, and fewer expensive effects such as blur, shadows and alpha layers.</li>
+<li><b>Test:</b> compare before and after frame-time histograms at P50, P90 and P99, not just “it feels smoother”.</li>
+<li><b>Monitor:</b> JankStats telemetry, and the share of slow frames in Vitals.</li>
+</ol></div>
+<p class="tip"><b>Trap:</b> optimising the average hides the worst frames that users notice, so look at P90 and P99. Jank during the first scroll is often JIT or class loading, which Baseline Profiles address. A GC pause appears as a gap with no app work, so reduce allocations in drawing and scrolling paths.</p>
+</section>
+
+<section class="topic">
+<h2>6. How hardware limits affect apps</h2>
+<p class="asks">Often asked as: “How do you build for the long tail of low-end devices?” A design-thinking question.</p>
+<div class="table-wrap"><table><tr><th>Limit</th><th>Effect</th><th>What you do</th></tr>
+<tr><td><b>RAM</b></td><td>OOM, and the system kills background processes, so state is lost</td><td>Downsample images, size caches from <code>getMemoryClass()</code>, respond to <code>onTrimMemory</code>, save state with <code>SavedStateHandle</code> or Room, and use Paging instead of large in-memory lists</td></tr>
+<tr><td><b>CPU and thermal</b></td><td>Slow parsing, jank, and <mark>thermal throttling</mark> during long tasks</td><td>Work off the main thread, bounded parallelism, monitor thermal status with <code>PowerManager</code>, and lower quality (video, AR) when the device is hot</td></tr>
+<tr><td><b>Battery</b></td><td>Doze, App Standby and background limits kill jobs</td><td>WorkManager with constraints, batch network calls, avoid wake locks, and check power traces</td></tr>
+<tr><td><b>Storage</b></td><td>Slow flash I/O, and “disk full”</td><td>Quota-aware caches, clean-up policies, and no large synchronous disk reads</td></tr>
+<tr><td><b>Screen and GPU</b></td><td>Different densities, sizes and refresh rates; weak GPUs</td><td>Adaptive layouts with <code>WindowSizeClass</code>, vector assets, and fewer overdraw-heavy effects</td></tr>
+<tr><td><b>Network</b></td><td>High latency, and the battery cost of the radio</td><td>Caching, compression, batching and offline-first design</td></tr>
+<tr><td><b>Sensors, ABI, OS</b></td><td>Missing hardware, and fragmentation</td><td><code>hasSystemFeature()</code> checks with graceful fallback, a test matrix, and Firebase Test Lab</td></tr></table></div>
+<div class="qa"><p class="q">How do you answer?</p>
+<p><mark>Design for the weakest device you support, then enhance.</mark> Define device tiers with <code>isLowRamDevice()</code> or the memory class. Reduce features such as image quality and animations on low tiers. <b>Test on a real low-end phone</b>, and use Vitals to see which devices have the worst ANR, crash and jank rates.</p></div>
+<p class="tip"><b>Trap:</b> “it works on my Pixel” is not evidence. Emulators do not reproduce thermal throttling, flash speed or OEM background killers.</p>
+</section>
+
+<section class="topic">
+<h2>7. Investigating network failures</h2>
+<p class="asks">Often asked as: “Some users get errors loading the feed. How do you find out why?”</p>
+<div class="qa"><p class="q">How do the seven steps apply?</p>
+<ol>
+<li><b>Reproduce:</b> which endpoint, which networks (Wi-Fi, cellular, VPN, corporate proxy), which regions, app versions and OS versions. Simulate bad networks with emulator throttling, a proxy's throttle, or toggling airplane mode.</li>
+<li><b>Collect:</b> Android Studio's <b>Network Inspector</b>, <b>Charles or mitmproxy</b>, an OkHttp logging interceptor (debug only, with tokens redacted), and <mark>an OkHttp <code>EventListener</code></mark> for DNS, connect, TLS and time-to-first-byte timings. Send correlation IDs in headers and match them to server logs.</li>
+<li><b>Locate the layer:</b> app, network or server. Replay the same request with <code>curl</code> or Postman from the same network. Check server dashboards for 5xx errors. Compare with other users and devices.</li>
+<li><b>Root cause:</b> classify the exception or status code:
+<ul><li><code>UnknownHostException</code> means DNS or offline. <code>SocketTimeoutException</code> means a slow or unreliable network or server. <code>ConnectException</code> means the server is refusing the connection.</li>
+<li><code>SSLHandshakeException</code> can mean a wrong device clock, an expired or mismatched pinned certificate, an old TLS version, or a proxy intercepting traffic.</li>
+<li>401 means an expired token or a refresh bug. 403 and 404 mean permissions or routing. <b>429</b> means rate limiting. 5xx means the backend.</li>
+<li>Parsing errors suggest an API contract change. Blocked cleartext traffic points to the Network Security Config.</li></ul></li>
+<li><b>Fix:</b> sensible timeouts. <mark>Retry with exponential backoff and jitter, and only for idempotent requests.</mark> Use a token-refresh authenticator, clear error states for the user, caching with offline-first design through Room, backup certificate pins, HTTP/2 and compression. Map errors to a sealed type.</li>
+<li><b>Test:</b> <code>MockWebServer</code> for failure cases such as timeouts, 500 errors, malformed JSON and slow bodies. Add an integration test through a flaky-network proxy.</li>
+<li><b>Monitor:</b> Firebase Performance or custom metrics for success rate, error-type breakdown, and p95 latency per endpoint and per network type. Alert on spikes.</li>
+</ol></div>
+<pre><code>class TimingListener : EventListener() {
+    override fun dnsEnd(call: Call, domain: String, addresses: List&lt;InetAddress&gt;) = log("dns done")
+    override fun secureConnectEnd(call: Call, handshake: Handshake?) = log("tls done")
+    override fun responseHeadersStart(call: Call) = log("time to first byte")
+}</code></pre>
+<p class="tip"><b>Trap:</b> blind retries of non-idempotent POST requests can charge a card twice or duplicate data, so use idempotency keys. Retrying everything at once during an outage causes a retry storm, so add jitter and a cap. Logging full request bodies in production leaks user data.</p>
+</section>

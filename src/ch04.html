@@ -1,0 +1,231 @@
+<section class="topic framework">
+<h2>How to answer “How do you optimise recomposition?”</h2>
+<p class="asks">A common opener in senior interviews. Say it in this order, and keep it to about 90 seconds.</p>
+<div class="qa"><p class="q">Model answer</p>
+<ol>
+<li><b>Measure first.</b> <mark>Do not optimise blindly.</mark> Use Layout Inspector recomposition counts, system tracing or Perfetto, and the Compose compiler reports. Always measure a <b>release build with R8</b>, because debug builds are much slower and can mislead you.</li>
+<li><b>Keep composables small and focused.</b> The recomposition scope is the nearest restartable composable. <mark>Small functions limit the blast radius</mark> of a state change.</li>
+<li><b>Read state as late as possible.</b> Reading state high in the tree recomposes everything below it. Lambda-based modifiers such as <code>Modifier.offset { }</code>, <code>graphicsLayer { }</code> and <code>drawBehind { }</code> skip composition and redo only layout or drawing.</li>
+<li><b>Use stable data models.</b> Immutable <code>val</code> properties, <code>@Immutable</code> or <code>@Stable</code> where justified, and <code>ImmutableList</code> instead of <code>List</code>. Strong skipping is the default from Kotlin 2.0.20 onwards, and a stability configuration file covers third-party classes.</li>
+<li><b>Remember expensive work.</b> For example <code>remember(list) { list.sortedBy { it.name } }</code>. Do not allocate inside composition on every pass.</li>
+<li><b>Use <code>derivedStateOf</code></b> when the input changes far more often than the output you need, such as scroll position driving a “show button” flag.</li>
+<li><b>Give lazy items stable keys.</b> Use <code>key = { it.id }</code> and <code>contentType</code>, so items are reused and moves do not recompose everything.</li>
+</ol>
+<p><mark>Closing line:</mark> “The goal is not zero recompositions. It is skipping the expensive ones. I fix what the profiler shows.”</p></div>
+<p class="tip"><b>Follow-up:</b> why does a composable with a <code>List&lt;Item&gt;</code> parameter recompose? A <code>List</code> is an interface the compiler cannot prove immutable, so it is <b>unstable</b>. Without strong skipping the function is never skipped. With strong skipping it is skipped only when the same instance is passed (<code>===</code>).</p>
+</section>
+
+<section class="topic">
+<h2>1. Recomposition and stability</h2>
+<p class="asks">Often asked as: “What triggers recomposition?”, “What is a stable type?”, “How do you read the Compose compiler reports?”</p>
+<div class="qa"><p class="q">What is recomposition?</p>
+<p>Compose re-executes only the composables that <mark>read a <code>State</code> whose value changed</mark>, to update the UI tree. Composables must be <b>idempotent and free of side effects</b>, because they can run in any order, run many times, be skipped, or run in parallel. A composable is <mark>skipped when all of its parameters are unchanged</mark>, provided it is skippable.</p></div>
+<div class="qa"><p class="q">What does “stable” mean?</p>
+<p>A type is stable if equal instances stay equal, changes to its public properties notify Compose, and all of its public properties are stable too. Stable types include primitives, <code>String</code>, function types, <code>State</code>, classes with only <code>val</code> stable properties, and types marked <code>@Stable</code> or <code>@Immutable</code>. Unstable types include <code>List</code>, <code>Set</code> and <code>Map</code>, classes with <code>var</code> properties, and classes from modules not compiled with the Compose compiler.</p>
+<div class="table-wrap"><table><tr><th></th><th>Before strong skipping</th><th>With strong skipping (default now)</th></tr>
+<tr><td>Stable parameter</td><td>Skipped if <code>equals()</code> is true</td><td>Skipped if <code>equals()</code> is true</td></tr>
+<tr><td>Unstable parameter</td><td><mark>Never skipped</mark></td><td>Skipped if it is the same instance (<code>===</code>)</td></tr>
+<tr><td>Lambdas</td><td>Needed manual <code>remember</code></td><td>Remembered automatically based on captures</td></tr></table></div></div>
+<pre><code>@Immutable
+data class Product(val id: Long, val name: String, val tags: ImmutableList&lt;String&gt;)
+
+// Generate compiler reports from a release build, then read the *-composables.txt file:
+// look for "restartable skippable" versus "restartable" (not skippable)</code></pre>
+<p class="tip"><b>Trap:</b> <code>@Stable</code> and <code>@Immutable</code> are promises that the compiler trusts. Breaking them causes stale UI. Mutating a <code>mutableListOf</code> in place does not notify Compose: use <code>mutableStateListOf</code>, or emit a new list.</p>
+</section>
+
+<section class="topic">
+<h2>2. remember vs rememberSaveable</h2>
+<p class="asks">Often asked as: “What survives rotation?”, “What can rememberSaveable store?”, “How does it compare with a ViewModel?”</p>
+<div class="table-wrap"><table><tr><th></th><th>remember</th><th>rememberSaveable</th></tr>
+<tr><td>Recomposition</td><td>Survives</td><td>Survives</td></tr>
+<tr><td>Configuration change</td><td><mark>Lost</mark></td><td>Survives (stored in a Bundle)</td></tr>
+<tr><td>Process death</td><td>Lost</td><td>Survives</td></tr>
+<tr><td>Allowed types</td><td>Anything</td><td>Bundle-compatible types, Parcelable, Serializable, or a custom Saver</td></tr></table></div>
+<div class="qa"><p class="q">How do you choose?</p>
+<ul><li><code>remember</code>: cached objects and calculations, animation state, and anything cheap to rebuild. <code>remember(key1) { }</code> recalculates when a key changes.</li>
+<li><code>rememberSaveable</code>: <mark>UI state the user would be annoyed to lose</mark>, such as text field input, the selected tab, or scroll position (<code>rememberLazyListState</code> already saves it).</li>
+<li><b>ViewModel</b>: screen-level state and business logic. It survives rotation but not process death, so add <code>SavedStateHandle</code> for what must survive that.</li></ul>
+<pre><code>var query by rememberSaveable { mutableStateOf("") }
+val total = remember(items) { items.sumOf { it.price } }   // recalculated only when items changes
+var filter by rememberSaveable(stateSaver = FilterSaver) { mutableStateOf(Filter()) }</code></pre></div>
+<p class="tip"><b>Trap:</b> <code>remember</code> forgets its value when the composable leaves the composition. In a LazyColumn without keys, that happens when an item scrolls off screen. The Bundle has a size limit of about 1 MB shared per transaction, so never store large lists or bitmaps in it.</p>
+</section>
+
+<section class="topic">
+<h2>3. LaunchedEffect vs DisposableEffect</h2>
+<p class="asks">Often asked as: “Which effect for which job?”, “How do the keys behave?”, “rememberUpdatedState”.</p>
+<div class="qa"><p class="q">What is the difference?</p>
+<ul><li><b>LaunchedEffect(key)</b>: runs a <mark>suspend block in a coroutine</mark> tied to the composition. It is cancelled when it leaves the composition, and <mark>cancelled and relaunched when the key changes</mark>. Use it for one-off loads, collecting flows, animations, and showing snackbars.</li>
+<li><b>DisposableEffect(key)</b>: for <mark>non-suspending setup that needs cleanup</mark>, such as registering listeners, receivers or lifecycle observers. <code>onDispose { }</code> is mandatory and runs when the key changes or the composable leaves.</li></ul>
+<pre><code>LaunchedEffect(userId) { viewModel.load(userId) }               // restarts when userId changes
+LaunchedEffect(Unit) {                                          // runs once
+    viewModel.events.collect { snackbarHost.showSnackbar(it) }
+}
+
+DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+        if (event == Lifecycle.Event.ON_RESUME) viewModel.refresh()
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+}</code></pre></div>
+<div class="qa"><p class="q">What are the other effect APIs?</p>
+<ul><li><code>SideEffect</code>: runs after every successful recomposition. Use it to publish Compose state to non-Compose code.</li>
+<li><code>rememberCoroutineScope</code>: launches work from event handlers such as <code>onClick</code>, not from the composition itself.</li>
+<li><code>rememberUpdatedState(x)</code>: when a long-running effect needs the latest value or lambda without restarting.</li>
+<li><code>produceState</code> turns non-Compose async data into a State. <code>snapshotFlow { state }</code> turns State into a Flow.</li></ul></div>
+<p class="tip"><b>Trap:</b> wrong keys. <code>LaunchedEffect(Unit)</code> that captures a changing value uses a stale one, and <code>LaunchedEffect(true)</code> has the same problem. Never run side effects, such as network calls or writes, directly in the composable body.</p>
+</section>
+
+<section class="topic">
+<h2>4. derivedStateOf</h2>
+<p class="asks">Often asked as: “When does it help, and when is it pointless?”, “How does it compare with remember(key)?”</p>
+<div class="qa"><p class="q">What does it do?</p>
+<p>It creates a <code>State</code> computed from other states. <mark>It notifies readers only when the <em>result</em> changes</mark>, not every time an input changes. It is ideal when the input changes far more often than the output.</p>
+<pre><code>val listState = rememberLazyListState()
+val showScrollToTop by remember {
+    derivedStateOf { listState.firstVisibleItemIndex &gt; 0 }
+}
+// firstVisibleItemIndex changes constantly, but showScrollToTop flips only once or twice
+AnimatedVisibility(showScrollToTop) { ScrollToTopButton() }</code></pre></div>
+<div class="qa"><p class="q">When should you not use it?</p>
+<ul><li>When the output changes as often as the input, as in <code>derivedStateOf { a + b }</code>. It only adds overhead.</li>
+<li>When the inputs are not Compose <code>State</code> (plain parameters): use <code>remember(key) { }</code>. <code>derivedStateOf</code> itself must be wrapped in <code>remember</code>.</li>
+<li>When the calculation is cheap. Recomputing is cheaper than tracking.</li></ul></div>
+<p class="tip"><b>Follow-up:</b> <code>remember(a, b) { calc }</code> recalculates when the keys change, based on equality of the parameters. <code>derivedStateOf</code> tracks the State reads inside its lambda. You can combine them: <code>remember(threshold) { derivedStateOf { x &gt; threshold } }</code>.</p>
+</section>
+
+<section class="topic">
+<h2>5. LazyColumn performance</h2>
+<p class="asks">Often asked as: “Why is my list janky?”, “keys and contentType”, “nested scrolling”.</p>
+<div class="qa"><p class="q">How do you keep a long list smooth?</p>
+<ul><li><mark>A stable, unique <code>key</code> per item</mark>. It keeps item identity across reorders and inserts, preserves item state and enables animations. <code>contentType</code> lets Compose reuse compositions of the same layout type.</li>
+<li><b>Stable, immutable item models</b>, so unchanged rows are skipped.</li>
+<li>No heavy work or allocations inside item composables. Precompute in the ViewModel or with <code>remember</code>.</li>
+<li>Read frequently changing state, such as scroll offset, through <code>derivedStateOf</code> or lambda-based modifiers.</li>
+<li>Load images with Coil or Glide at a fixed size. Use <code>Modifier.animateItem()</code> for item animations.</li>
+<li>Use Paging 3 (<code>collectAsLazyPagingItems()</code>) for large or remote data.</li>
+<li><mark>Test in release mode</mark>, and add <b>Baseline Profiles</b> to reduce jank during the first scroll.</li></ul>
+<pre><code>LazyColumn(state = listState) {
+    items(items = products, key = { it.id }, contentType = { it.type }) { product -&gt;
+        ProductRow(product, onClick = onProductClick)   // a lambda that does not capture changing state
+    }
+}</code></pre></div>
+<p class="tip"><b>Trap:</b> do not nest a LazyColumn inside a <code>verticalScroll</code> or another lazy list in the same direction. That causes an infinite-height crash, or composes every item. Use one lazy list with several <code>item {}</code> and <code>items {}</code> sections. Keys must be unique and Bundle-compatible, or state restoration crashes.</p>
+</section>
+
+<section class="topic">
+<h2>6. State hoisting</h2>
+<p class="asks">Often asked as: “What is it, and why?”, “Where do you hoist state to?”, “stateful vs stateless composables”.</p>
+<div class="qa"><p class="q">Explain it.</p>
+<p>State hoisting moves state out of a composable and into its caller, so the composable becomes <b>stateless</b>. It receives a <code>value</code> and an <code>onValueChange</code> callback. The pattern is <mark>state flows down and events flow up</mark>. The benefits are a single source of truth, reuse, previews, easy testing, and sharing state between siblings.</p>
+<pre><code>@Composable
+fun SearchBar(query: String, onQueryChange: (String) -&gt; Unit) {       // stateless
+    TextField(value = query, onValueChange = onQueryChange)
+}
+
+@Composable
+fun SearchScreen(viewModel: SearchViewModel = hiltViewModel()) {        // stateful host
+    val ui by viewModel.ui.collectAsStateWithLifecycle()
+    SearchBar(query = ui.query, onQueryChange = viewModel::onQueryChange)
+}</code></pre></div>
+<div class="qa"><p class="q">How high do you hoist?</p>
+<ul><li>At least to the <mark>lowest common ancestor</mark> of all composables that read or write the state.</li>
+<li><b>UI element state</b>, such as scroll position or expanded or collapsed, belongs in a plain state holder class exposed through a <code>rememberXState()</code> function.</li>
+<li><b>Screen and business state</b> belongs in the ViewModel. Do not pass the ViewModel into child composables: pass state and lambdas.</li></ul></div>
+<p class="tip"><b>Trap:</b> hoisting too far causes needless recomposition of large subtrees. Hoisting too little duplicates state. Offer a default parameter, such as <code>state = rememberXState()</code>, so simple callers stay simple.</p>
+</section>
+
+<section class="topic">
+<h2>7. Compose lifecycle</h2>
+<p class="asks">Often asked as: “What is the composable lifecycle?”, “What are the three phases?”, “identity”, “ComposeView in Fragments”.</p>
+<figure class="diagram">
+<svg viewBox="0 0 680 170" role="img" aria-label="Three phases per frame: composition, layout, drawing">
+<defs><marker id="arr-cp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--c)"/></marker></defs>
+<rect x="20" y="40" width="180" height="70" rx="14" class="bx"/><text x="110" y="70" text-anchor="middle">Composition</text><text x="110" y="92" text-anchor="middle" class="sm">what to show</text>
+<rect x="250" y="40" width="180" height="70" rx="14" class="bx"/><text x="340" y="70" text-anchor="middle">Layout</text><text x="340" y="92" text-anchor="middle" class="sm">measure and place</text>
+<rect x="480" y="40" width="180" height="70" rx="14" class="bx"/><text x="570" y="70" text-anchor="middle">Drawing</text><text x="570" y="92" text-anchor="middle" class="sm">render pixels</text>
+<line x1="202" y1="75" x2="247" y2="75" class="arr" marker-end="url(#arr-cp)"/>
+<line x1="432" y1="75" x2="477" y2="75" class="arr" marker-end="url(#arr-cp)"/>
+<text x="340" y="150" text-anchor="middle" class="sm">A state read in one phase redoes that phase and the later ones only. Reading in layout or drawing skips composition.</text>
+</svg>
+<figcaption>The three phases that run each frame. Lambda-based modifiers read state in a later phase, which is cheaper.</figcaption>
+</figure>
+<div class="qa"><p class="q">What is the lifecycle of a composable?</p>
+<p><mark>Enter the composition, recompose zero or more times, then leave the composition.</mark> Effects and <code>remember</code> values exist only between entering and leaving. Identity is the <b>call site and its position in the tree</b>. <code>key(id) { }</code> gives explicit identity, which is used in lazy lists and in loops whose items reorder.</p></div>
+<div class="qa"><p class="q">What are the three phases of each frame?</p>
+<ol><li><b>Composition</b>: decides what to show by running composables and building the tree.</li>
+<li><b>Layout</b>: measures and places each node.</li>
+<li><b>Drawing</b>: renders the result.</li></ol>
+<p>A state read in one phase invalidates that phase and the later ones. <mark>That is why lambda modifiers such as <code>offset {}</code> and <code>drawBehind {}</code> are cheaper: reads in layout and drawing skip composition.</mark></p></div>
+<div class="qa"><p class="q">How does it relate to the Android lifecycle?</p>
+<p>A composition lives as long as its host, which is a <code>ComposeView</code> or an Activity. It is <b>not</b> stopped at <code>onStop</code>. Collect state with <code>collectAsStateWithLifecycle()</code>, and react to lifecycle events with <code>LifecycleEventEffect</code>. In Fragments, set <code>ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed</code>, so the composition is disposed along with the Fragment's view.</p></div>
+<p class="tip"><b>Trap:</b> assuming composables run once, or in order. Never mutate shared variables or log analytics in the body, because it runs on every recomposition, and some of those runs get discarded. Use effects instead.</p>
+</section>
+
+<section class="topic">
+<h2>8. Navigation</h2>
+<p class="asks">Often asked as: “How do you structure navigation?”, “How do you pass arguments?”, “ViewModel scope”, “bottom bar state”.</p>
+<div class="qa"><p class="q">How does Navigation Compose work in practice?</p>
+<ul><li><code>NavHost(navController, startDestination)</code> with <code>composable</code> destinations. You use one Activity and many destinations.</li>
+<li><b>Type-safe routes</b> with Kotlin Serialization: <code>@Serializable data class Detail(val id: Long)</code>, then <code>navController.navigate(Detail(5))</code>, and <code>backStackEntry.toRoute&lt;Detail&gt;()</code> to read it back.</li>
+<li><mark>Pass IDs, not objects.</mark> Load the data inside the destination's ViewModel. That survives process death and keeps arguments small.</li>
+<li><code>hiltViewModel()</code> inside a destination scopes the ViewModel to its <code>NavBackStackEntry</code>. For state shared by several screens, scope the ViewModel to a nested graph's entry.</li>
+<li>Bottom bar: <code>navigate(route) { popUpTo(start) { saveState = true }; launchSingleTop = true; restoreState = true }</code>.</li>
+<li><b>Deep links</b> are declared per destination. Nested graphs map to features or modules.</li></ul>
+<pre><code>NavHost(navController, startDestination = Home) {
+    composable&lt;Home&gt; { HomeScreen(onOpen = { id -&gt; navController.navigate(Detail(id)) }) }
+    composable&lt;Detail&gt; { DetailScreen(onBack = navController::navigateUp) }
+}</code></pre></div>
+<p class="tip"><b>Trap:</b> <mark>do not pass <code>NavController</code> down the tree.</mark> It hurts previews and tests. Expose callbacks such as <code>onOpen</code> instead. Collect one-off navigation events once, inside <code>LaunchedEffect</code>. Navigation 3 is a newer library in which you own the back stack as state. Mention it as awareness, and check the current documentation for its status.</p>
+</section>
+
+<section class="topic">
+<h2>9. Material Design 3</h2>
+<p class="asks">Often asked as: “How is theming done?”, “Dynamic colour”, “Adaptive layouts”, “edge-to-edge”.</p>
+<div class="qa"><p class="q">What should a Material 3 answer cover?</p>
+<ul><li><b>Theme</b>: <code>MaterialTheme(colorScheme, typography, shapes)</code>. Read values through <code>MaterialTheme.colorScheme.primary</code>, never hard-coded colours.</li>
+<li><b>Colour roles</b>: <code>primary</code>, <code>onPrimary</code>, <code>primaryContainer</code>, <code>secondary</code>, <code>tertiary</code>, <code>surface</code>, <code>surfaceVariant</code>, <code>error</code>. The “on” colours guarantee contrast against their base colour.</li>
+<li><mark><b>Dynamic colour</b> (Android 12 and later): <code>dynamicLightColorScheme(context)</code> derives the palette from the wallpaper.</mark> Fall back to a static scheme below API 31.</li>
+<li>Dark theme follows <code>isSystemInDarkTheme()</code>. <code>CompositionLocal</code>s such as <code>LocalContentColor</code> propagate defaults.</li>
+<li>Components: <code>Scaffold</code>, <code>TopAppBar</code>, <code>NavigationBar</code>, <code>ModalBottomSheet</code>, <code>FilledTonalButton</code>, <code>Card</code>.</li>
+<li><b>Adaptive UI</b>: <code>WindowSizeClass</code>, plus <code>NavigationSuiteScaffold</code> or list-detail layouts for tablets and foldables.</li>
+<li><b>Edge-to-edge</b>: call <code>enableEdgeToEdge()</code> and handle <code>WindowInsets</code>, through <code>Scaffold</code> padding and <code>imePadding</code>.</li></ul>
+<pre><code>@Composable
+fun AppTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -&gt; Unit) {
+    val context = LocalContext.current
+    val scheme = when {
+        Build.VERSION.SDK_INT &gt;= 31 && dark  -&gt; dynamicDarkColorScheme(context)
+        Build.VERSION.SDK_INT &gt;= 31          -&gt; dynamicLightColorScheme(context)
+        dark                              -&gt; DarkColors
+        else                              -&gt; LightColors
+    }
+    MaterialTheme(colorScheme = scheme, typography = AppTypography, content = content)
+}</code></pre></div>
+<p class="tip"><b>Trap:</b> mixing the M2 (<code>androidx.compose.material</code>) and M3 imports in one screen. Forgetting the <code>Scaffold</code> content padding lets content hide under the system bars. Build a design system as a thin wrapper over M3 tokens, rather than scattering literal values.</p>
+</section>
+
+<section class="topic">
+<h2>10. Compose testing</h2>
+<p class="asks">Often asked as: “How do you test composables?”, “The semantics tree”, “screenshot tests”, “synchronisation”.</p>
+<div class="qa"><p class="q">How does it work?</p>
+<p>Tests query the <mark><b>semantics tree</b></mark>, which is the same accessibility information that TalkBack uses, not pixels. <code>createComposeRule()</code> tests a pure composable. <code>createAndroidComposeRule&lt;MainActivity&gt;()</code> needs an Activity, and Hilt if you use it. The rule synchronises automatically with recomposition, animations and idling resources.</p>
+<pre><code>@get:Rule val rule = createComposeRule()
+
+@Test
+fun showsError_andRetries() {
+    var retried = false
+    rule.setContent { ErrorView(message = "Offline", onRetry = { retried = true }) }
+    rule.onNodeWithText("Offline").assertIsDisplayed()
+    rule.onNodeWithTag("retry_button").performClick()
+    assertTrue(retried)
+}</code></pre></div>
+<div class="qa"><p class="q">What do you emphasise?</p>
+<ul><li><mark><b>Stateless composables are easy to test</b>: pass state in and assert on the lambdas that come out.</mark> This is a payoff of state hoisting. Test ViewModels separately with fakes and <code>runTest</code>.</li>
+<li>Finders: <code>onNodeWithText</code>, <code>onNodeWithContentDescription</code>, <code>onNodeWithTag</code>, <code>onAllNodes</code>. Assertions: <code>assertIsDisplayed</code>, <code>assertTextEquals</code>, <code>assertIsEnabled</code>. Actions: <code>performClick</code>, <code>performTextInput</code>, <code>performScrollToIndex</code>.</li>
+<li>Use <code>useUnmergedTree = true</code> when merged semantics hide child nodes. Use <code>waitUntil { }</code> for async work, and <code>mainClock</code> to control animations.</li>
+<li><b>Screenshot tests</b> (Paparazzi, Roborazzi, Compose Preview Screenshot Testing) catch visual regressions on the JVM. <b>Robolectric</b> runs Compose UI tests without an emulator.</li>
+<li>For Hilt UI tests, use <code>HiltAndroidRule</code> and replace modules with fake repositories.</li></ul></div>
+<p class="tip"><b>Trap:</b> finding nodes by visible text breaks when strings are localised. Use <code>testTag</code> for test-only hooks and content descriptions for accessibility. Tests that <code>sleep</code> instead of using <code>waitUntil</code> or idling are flaky.</p>
+</section>
